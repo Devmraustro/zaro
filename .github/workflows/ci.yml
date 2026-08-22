@@ -1,0 +1,112 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: ZARO API (ruff, mypy, pytest, security)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/zaro-api
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Sync dependencies
+        run: uv sync --extra dev
+
+      - name: Secret scan
+        run: uv run python scripts/check_secrets.py
+
+      - name: Ruff check
+        run: uv run ruff check app tests scripts
+
+      - name: Ruff format check
+        run: uv run ruff format --check app tests scripts
+
+      - name: Mypy
+        run: uv run mypy app
+
+      - name: Pytest
+        run: uv run pytest tests/ -q
+        env:
+          ZARO_ENVIRONMENT: test
+
+      - name: Dependency audit (pip-audit)
+        run: |
+          pip install pip-audit
+          uv export --frozen --no-dev --format requirements-txt > /tmp/zaro-requirements.txt
+          pip-audit --requirement /tmp/zaro-requirements.txt --strict
+
+  frontend:
+    name: ZARO Web (typecheck, lint, test, build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Enable pnpm
+        run: corepack enable && corepack prepare pnpm@11.20.0 --activate
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm turbo run typecheck --filter=@zaro/web
+
+      - name: Lint
+        run: pnpm turbo run lint --filter=@zaro/web
+
+      - name: Test
+        run: pnpm turbo run test --filter=@zaro/web
+
+      - name: Build
+        run: pnpm turbo run build --filter=@zaro/web
+
+  sdk:
+    name: ZARO SDK (typecheck, lint, test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Enable pnpm
+        run: corepack enable && corepack prepare pnpm@11.20.0 --activate
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm turbo run typecheck --filter=@zaro/sdk
+
+      - name: Lint
+        run: pnpm turbo run lint --filter=@zaro/sdk
+
+      - name: Test
+        run: pnpm turbo run test --filter=@zaro/sdk

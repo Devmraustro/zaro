@@ -1,0 +1,37 @@
+# Dependencies and build outputs
+node_modules/
+.next/
+out/
+dist/
+coverage/
+.turbo/
+*.tsbuildinfo
+next-env.d.ts
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+.uv/
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

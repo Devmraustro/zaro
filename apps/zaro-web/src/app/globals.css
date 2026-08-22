@@ -1,0 +1,28 @@
+@import "tailwindcss";
+
+@theme {
+  --color-zaro-black: #0b0b0b;
+  --color-zaro-graphite: #1c1d1b;
+  --color-zaro-bronze: #a87952;
+  --color-zaro-ivory: #f2eee6;
+  --color-zaro-steel: #8b8d89;
+
+  --color-zaro-black-light: #1a1a1a;
+  --color-zaro-ivory-dark: #e8e4dc;
+
+  --font-sans: "Inter", system-ui, -apple-system, sans-serif;
+  --font-serif: "Playfair Display", Georgia, serif;
+  --font-mono: "JetBrains Mono", "Fira Code", monospace;
+}
+
+html {
+  font-family: var(--font-sans);
+  color: var(--color-zaro-graphite);
+  background-color: var(--color-zaro-ivory);
+}
+
+body {
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}

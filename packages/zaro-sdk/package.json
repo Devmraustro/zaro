@@ -1,0 +1,28 @@
+{
+  "name": "@zaro/sdk",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0",
+    "eslint": "^9.14.0",
+    "typescript": "^5.6.3",
+    "typescript-eslint": "^8.26.0",
+    "vitest": "^2.1.9"
+  }
+}
