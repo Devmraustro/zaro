@@ -66,6 +66,8 @@ _CATEGORY_EXTENSIONS: dict[str, frozenset[str]] = {
     "inspiration": frozenset({".png", ".jpg", ".jpeg", ".webp", ".gif", ".pdf"}),
     # Phase 2: public product media
     "product_media": frozenset({".png", ".jpg", ".jpeg", ".webp"}),
+    # Phase 3: manual CCP payment proofs (images + PDF receipts)
+    "payment_proofs": frozenset({".png", ".jpg", ".jpeg", ".webp", ".pdf"}),
 }
 
 DEFAULT_MAX_UPLOAD_BYTES = 5 * 1024 * 1024

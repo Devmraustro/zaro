@@ -166,6 +166,88 @@ class CustomRequestSource(StrEnum):
     WALK_IN = "walk_in"
 
 
+class QuoteStatus(StrEnum):
+    DRAFT = "draft"
+    SENT = "sent"
+    VIEWED = "viewed"
+    ACCEPTED = "accepted"
+    DEPOSIT_REQUIRED = "deposit_required"
+    CONVERTED = "converted"
+    EXPIRED = "expired"
+    CANCELLED = "cancelled"
+    REJECTED = "rejected"
+
+
+# Allowed forward transitions of the quote lifecycle.
+# Terminal states (EXPIRED, CANCELLED, REJECTED, CONVERTED) map to an empty set.
+QUOTE_TRANSITIONS: dict[QuoteStatus, frozenset[QuoteStatus]] = {
+    QuoteStatus.DRAFT: frozenset({QuoteStatus.SENT, QuoteStatus.CANCELLED}),
+    QuoteStatus.SENT: frozenset(
+        {QuoteStatus.VIEWED, QuoteStatus.ACCEPTED, QuoteStatus.REJECTED, QuoteStatus.CANCELLED}
+    ),
+    QuoteStatus.VIEWED: frozenset(
+        {QuoteStatus.ACCEPTED, QuoteStatus.REJECTED, QuoteStatus.CANCELLED}
+    ),
+    QuoteStatus.ACCEPTED: frozenset({QuoteStatus.DEPOSIT_REQUIRED}),
+    QuoteStatus.DEPOSIT_REQUIRED: frozenset({QuoteStatus.CONVERTED}),
+    QuoteStatus.CONVERTED: frozenset(),
+    QuoteStatus.EXPIRED: frozenset(),
+    QuoteStatus.CANCELLED: frozenset(),
+    QuoteStatus.REJECTED: frozenset(),
+}
+
+
+class OrderStatus(StrEnum):
+    # Phase 3 states. Future phases extend this enum and the transition map
+    # with production/delivery states; existing rows keep working because
+    # unknown-to-old-code values are never produced by old code paths.
+    PENDING_DEPOSIT = "pending_deposit"
+    CONFIRMED = "confirmed"
+    CANCELLED = "cancelled"
+
+
+ORDER_TRANSITIONS: dict[OrderStatus, frozenset[OrderStatus]] = {
+    OrderStatus.PENDING_DEPOSIT: frozenset(
+        {OrderStatus.CONFIRMED, OrderStatus.CANCELLED}
+    ),
+    OrderStatus.CONFIRMED: frozenset(),  # future phases append production states here
+    OrderStatus.CANCELLED: frozenset(),
+}
+
+
+class PaymentMethod(StrEnum):
+    CCP = "ccp"
+
+
+class PaymentStatus(StrEnum):
+    PENDING = "pending"
+    PROOF_UPLOADED = "proof_uploaded"
+    UNDER_REVIEW = "under_review"
+    CONFIRMED = "confirmed"
+    REJECTED = "rejected"
+    CANCELLED = "cancelled"
+
+
+PAYMENT_STATUS_TRANSITIONS: dict[PaymentStatus, frozenset[PaymentStatus]] = {
+    PaymentStatus.PENDING: frozenset(
+        {PaymentStatus.PROOF_UPLOADED, PaymentStatus.UNDER_REVIEW, PaymentStatus.CANCELLED}
+    ),
+    PaymentStatus.PROOF_UPLOADED: frozenset(
+        {PaymentStatus.UNDER_REVIEW, PaymentStatus.CANCELLED}
+    ),
+    PaymentStatus.UNDER_REVIEW: frozenset(
+        {PaymentStatus.CONFIRMED, PaymentStatus.REJECTED}
+    ),
+    # CONFIRMED is irreversible by design; corrections go through a separate
+    # reversal workflow in a future phase.
+    PaymentStatus.CONFIRMED: frozenset(),
+    # A rejected claim may be resubmitted with better proof (replacement flow,
+    # same payment record -- no duplicate claims).
+    PaymentStatus.REJECTED: frozenset({PaymentStatus.PROOF_UPLOADED}),
+    PaymentStatus.CANCELLED: frozenset(),
+}
+
+
 class FilePurpose(StrEnum):
     """Why a stored asset exists. Drives authorization and lifecycle rules."""
 

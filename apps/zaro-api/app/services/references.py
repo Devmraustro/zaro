@@ -4,11 +4,16 @@ Server-controlled identifiers:
 - slugs are derived from names and made unique with numeric suffixes;
 - product codes follow ``ZAR-{CATEGORY}-{NNN}`` (e.g. ZAR-TAB-001);
 - variant SKUs follow ``{product_code}-{VNN}``;
-- custom-request references follow ``CR-{YYYY}-{NNNN}``.
+- custom-request references follow ``CR-{YYYY}-{NNNN}``;
+- quote numbers follow ``ZQ-{YYYY}-{NNNNNN}``;
+- order numbers follow ``ZO-{YYYY}-{NNNNNN}``;
+- payment references follow ``ZPAY-{YYYY}-{NNNNNN}``.
 
 Sequential codes are derived from existing rows inside the caller's
 transaction. This is safe under normal admin traffic; a unique-violation
-retry loop covers rare concurrent creations.
+retry loop covers rare concurrent creations. References are convenience
+labels only -- authorization always uses internal identifiers plus
+ownership/permission checks.
 """
 
 from __future__ import annotations
@@ -22,7 +27,10 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.custom_request import CustomRequest
+from app.models.order import Order
+from app.models.payment import Payment
 from app.models.product import Product
+from app.models.quote import Quote
 
 _SLUG_MAX = 200
 
@@ -81,6 +89,31 @@ async def next_custom_request_reference(db: AsyncSession) -> str:
     current_max = (await db.execute(stmt)).scalar_one_or_none()
     next_seq = _next_sequence(current_max, prefix, width=4)
     return f"{prefix}{next_seq:04d}"
+
+
+async def _next_year_reference(db: AsyncSession, model: Any, column: Any, prefix: str) -> str:
+    stmt = select(func.max(column)).where(column.like(f"{prefix}%"))
+    current_max = (await db.execute(stmt)).scalar_one_or_none()
+    next_seq = _next_sequence(current_max, prefix, width=6)
+    return f"{prefix}{next_seq:06d}"
+
+
+async def next_quote_number(db: AsyncSession) -> str:
+    """Generate ZQ-YYYY-NNNNN for the current year."""
+    year = datetime.now(UTC).year
+    return await _next_year_reference(db, Quote, Quote.quote_number, f"ZQ-{year}-")
+
+
+async def next_order_number(db: AsyncSession) -> str:
+    """Generate ZO-YYYY-NNNNN for the current year."""
+    year = datetime.now(UTC).year
+    return await _next_year_reference(db, Order, Order.order_number, f"ZO-{year}-")
+
+
+async def next_payment_reference(db: AsyncSession) -> str:
+    """Generate ZPAY-YYYY-NNNNN for the current year."""
+    year = datetime.now(UTC).year
+    return await _next_year_reference(db, Payment, Payment.payment_reference, f"ZPAY-{year}-")
 
 
 def _next_sequence(current_max: str | None, prefix: str, *, width: int) -> int:

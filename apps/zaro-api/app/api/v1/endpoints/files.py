@@ -181,12 +181,26 @@ async def get_access_url(
 
 async def _authorize_private_access(db: AsyncSession, asset: FileAsset, user: User) -> None:
     from app.core.rbac import has_permission
+    from app.models.customer import Customer
+
+    # Payment proofs are FINANCIAL documents: staff access requires the
+    # payments.read permission (owner/admin/accounting). Sales, workers and
+    # content editors must NOT see them even though they may read other
+    # private assets. The owning customer may always view their own proof.
+    if asset.purpose == FilePurpose.PAYMENT_PROOF:
+        if user.role != "customer" and has_permission(user.role, Permission.PAYMENTS_READ):
+            return
+        if user.role == "customer":
+            linked = (await db.execute(select(Customer).where(Customer.user_id == user.id))).scalar_one_or_none()
+            by_email = (await db.execute(select(Customer).where(Customer.email == user.email.lower()))).scalar_one_or_none()
+            customer = linked or by_email
+            if customer is not None and asset.customer_id == customer.id:
+                return
+        raise ForbiddenError("You do not have access to this file")
 
     if user.role != "customer" and has_permission(user.role, Permission.CUSTOM_REQUESTS_READ):
         return
     if user.role == "customer":
-        from app.models.customer import Customer
-
         linked = (await db.execute(select(Customer).where(Customer.user_id == user.id))).scalar_one_or_none()
         by_email = (await db.execute(select(Customer).where(Customer.email == user.email.lower()))).scalar_one_or_none()
         customer = linked or by_email
