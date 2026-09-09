@@ -72,6 +72,18 @@ def test_upgrade_head_creates_commerce_tables(alembic_env, sqlite_url):
             "customers",
             "custom_requests",
             "file_assets",
+            # Phase 3 commerce
+            "quotes",
+            "quote_lines",
+            "orders",
+            "order_lines",
+            "payments",
+            "payment_configuration",
+            # Phase 4 inventory + production
+            "stock_levels",
+            "stock_movements",
+            "production_orders",
+            "production_material_reservations",
         }
         missing = expected - tables
         assert not missing, f"Missing tables after upgrade: {missing}"
@@ -83,6 +95,16 @@ def test_upgrade_head_creates_commerce_tables(alembic_env, sqlite_url):
         assert {"material_id", "effective_from", "unit_price_minor"} <= price_cols
         asset_cols = {c["name"] for c in inspector.get_columns("file_assets")}
         assert {"storage_key", "sha256", "purpose", "visibility"} <= asset_cols
+        quote_cols = {c["name"] for c in inspector.get_columns("quotes")}
+        assert {"quote_number", "total_minor", "deposit_amount_minor", "status"} <= quote_cols
+        order_cols = {c["name"] for c in inspector.get_columns("orders")}
+        assert {"order_number", "total_minor", "deposit_required_minor", "status"} <= order_cols
+        payment_cols = {c["name"] for c in inspector.get_columns("payments")}
+        assert {"payment_reference", "amount_minor", "status"} <= payment_cols
+        stock_cols = {c["name"] for c in inspector.get_columns("stock_levels")}
+        assert {"material_id", "on_hand", "reserved"} <= stock_cols
+        prod_cols = {c["name"] for c in inspector.get_columns("production_orders")}
+        assert {"production_number", "order_id", "status"} <= prod_cols
     finally:
         engine.dispose()
 
@@ -94,7 +116,24 @@ def test_downgrade_removes_phase2_tables(alembic_env, sqlite_url):
     engine = create_engine(sqlite_url)
     try:
         tables = set(inspect(engine).get_table_names())
-        for table in ("products", "categories", "materials", "customers", "custom_requests", "file_assets"):
+        for table in (
+            "products",
+            "categories",
+            "materials",
+            "customers",
+            "custom_requests",
+            "file_assets",
+            "quotes",
+            "quote_lines",
+            "orders",
+            "order_lines",
+            "payments",
+            "payment_configuration",
+            "stock_levels",
+            "stock_movements",
+            "production_orders",
+            "production_material_reservations",
+        ):
             assert table not in tables, f"{table} should have been dropped by downgrade"
         # Phase 1 tables remain.
         assert "users" in tables

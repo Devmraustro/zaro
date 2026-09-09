@@ -53,7 +53,7 @@ jobs:
       - name: Dependency audit (pip-audit)
         run: |
           pip install pip-audit
-          uv export --frozen --no-dev --format requirements-txt > /tmp/zaro-requirements.txt
+          uv export --frozen --no-dev --no-emit-project --format requirements-txt > /tmp/zaro-requirements.txt
           pip-audit --requirement /tmp/zaro-requirements.txt --strict
 
   frontend:

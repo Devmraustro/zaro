@@ -94,9 +94,7 @@ class QuoteLine(Base, UUIDPrimaryKeyMixin):
         CheckConstraint("line_total_minor >= 0", name="ck_quote_lines_total_non_negative"),
     )
 
-    quote_id: Mapped[object] = mapped_column(
-        ForeignKey("quotes.id", ondelete="CASCADE"), nullable=False, index=True
-    )
+    quote_id: Mapped[object] = mapped_column(ForeignKey("quotes.id", ondelete="CASCADE"), nullable=False, index=True)
     position: Mapped[int] = mapped_column(nullable=False, default=0)
     description: Mapped[str] = mapped_column(String(300), nullable=False)
     quantity: Mapped[Decimal] = mapped_column(Numeric(12, 3), nullable=False)

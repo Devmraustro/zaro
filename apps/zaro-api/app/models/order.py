@@ -54,7 +54,9 @@ class Order(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         ForeignKey("custom_requests.id", ondelete="SET NULL"), nullable=True, index=True
     )
 
-    status: Mapped[OrderStatus] = mapped_column(String(30), nullable=False, default=OrderStatus.PENDING_DEPOSIT, index=True)
+    status: Mapped[OrderStatus] = mapped_column(
+        String(30), nullable=False, default=OrderStatus.PENDING_DEPOSIT, index=True
+    )
     currency: Mapped[str] = mapped_column(String(3), nullable=False, default="DZD")
 
     subtotal_minor: Mapped[int] = mapped_column(BigInteger, nullable=False)
@@ -86,9 +88,7 @@ class OrderLine(Base, UUIDPrimaryKeyMixin):
         CheckConstraint("line_total_minor >= 0", name="ck_order_lines_total_non_negative"),
     )
 
-    order_id: Mapped[object] = mapped_column(
-        ForeignKey("orders.id", ondelete="CASCADE"), nullable=False, index=True
-    )
+    order_id: Mapped[object] = mapped_column(ForeignKey("orders.id", ondelete="CASCADE"), nullable=False, index=True)
     position: Mapped[int] = mapped_column(nullable=False, default=0)
     description: Mapped[str] = mapped_column(String(300), nullable=False)
     quantity: Mapped[Decimal] = mapped_column(Numeric(12, 3), nullable=False)

@@ -74,8 +74,18 @@ class InventoryWasteRequest(StockMovementCreate):
 
 
 class AdjustRequest(StockMovementCreate):
-    """Adjust stock level (physical count correction)."""
+    """Adjust stock level (physical count correction).
 
+    ADJUST is the only movement that accepts a signed quantity: positive
+    grows on_hand, negative shrinks it. All other movements take a positive
+    quantity with the direction implied by the movement type.
+    """
+
+    quantity: str = Field(
+        pattern=r"^-?(0|[1-9]\d{0,6})(\.\d{1,3})?$",
+        description="Signed decimal quantity (up to 3 decimal places, non-zero)",
+        examples=["10", "-2.5"],
+    )
     notes: str | None = Field(default=None, max_length=1000)
 
 
