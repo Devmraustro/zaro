@@ -55,23 +55,20 @@ class Payment(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         CheckConstraint("amount_minor > 0", name="ck_payments_amount_positive"),
         # At most ONE unresolved claim per order (pending/proof/review) and at
         # most ONE confirmed deposit per order. Rejected/cancelled rows are
-        # exempt so a follow-up claim can be opened after cancellation.
-        # Partial unique indexes on PostgreSQL; the equivalent partial
-        # predicate on SQLite (without it SQLite would enforce a full unique
-        # index on order_id and forbid legitimate follow-up claims).
+        # exempt so resubmission reuses the same record instead of piling up
+        # duplicates. (PostgreSQL partial unique indexes; SQLite tests skip
+        # them and enforce the invariant in the service layer.)
         Index(
             "uq_payments_order_active",
             "order_id",
             unique=True,
             postgresql_where=text("status IN ('pending','proof_uploaded','under_review')"),
-            sqlite_where=text("status IN ('pending','proof_uploaded','under_review')"),
         ),
         Index(
             "uq_payments_order_confirmed",
             "order_id",
             unique=True,
             postgresql_where=text("status = 'confirmed'"),
-            sqlite_where=text("status = 'confirmed'"),
         ),
     )
 

@@ -5,7 +5,6 @@ uploads proof, and an authorized ZARO operator confirms or rejects after
 human review. Nothing here is automatic or bank-verified.
 """
 
-from time import time
 from typing import Annotated, Any
 from uuid import UUID
 
@@ -65,8 +64,7 @@ def serialize_public(payment: Payment) -> dict[str, Any]:
         "ccp_account_holder": payment.ccp_account_holder_snapshot,
         "ccp_account_identifier": payment.ccp_account_identifier_snapshot,
         "rejection_reason_code": payment.rejection_reason_code,
-        "rejection_reason_note": payment.rejection_reason_note
-        or _REVIEW_REASONS_PUBLIC.get(payment.rejection_reason_code or ""),
+        "rejection_reason_note": payment.rejection_reason_note or _REVIEW_REASONS_PUBLIC.get(payment.rejection_reason_code or ""),
         "has_proof": payment.proof_asset_id is not None,
         "submitted_at": payment.submitted_at.isoformat() if payment.submitted_at else None,
         "reviewed_at": payment.reviewed_at.isoformat() if payment.reviewed_at else None,
@@ -114,11 +112,6 @@ async def upload_payment_proof(
 ) -> dict[str, Any]:
     """Attach (or replace) proof. Rejected payments may resubmit new proof."""
     payment = await _staff_or_owner_payment(db, payment_id, user)
-
-    # Validate the transition BEFORE touching storage so a payment that can
-    # no longer accept proof (e.g. already confirmed) does not leave an
-    # orphaned file on disk.
-    payments_service.validate_transition(PaymentStatus(payment.status), PaymentStatus.PROOF_UPLOADED)
 
     data = await file.read()
     backend = get_storage_backend(settings)
@@ -175,8 +168,6 @@ async def submit_payment_for_review(
 ) -> dict[str, Any]:
     """Customer asserts the transfer is done; proof becomes mandatory."""
     payment = await _staff_or_owner_payment(db, payment_id, user)
-    # Row-locked so concurrent submissions serialize (exactly-once audit).
-    payment = await payments_service.get_for_update(db, payment.id)
     old_status = str(PaymentStatus(payment.status))
     payment = await payments_service.submit_for_review(db, payment)
 
@@ -223,6 +214,7 @@ async def get_proof_access_url(
         raise NotFoundError("No proof uploaded for this payment")
     token = sign_url(settings, asset.storage_key, _SIGNED_URL_TTL_SECONDS)
     expires_at = int(token.split("|")[0])
+    from time import time
 
     return {
         "url_path": f"/api/v1/files/{asset.id}/content?token={token}",
@@ -244,7 +236,9 @@ async def list_payments_admin_endpoint(
         Query(pattern=r"^(pending|proof_uploaded|under_review|confirmed|rejected|cancelled)$"),
     ] = None,
 ) -> dict[str, Any]:
-    payments_list, total = await payments_service.list_payments_admin(db, page=page, page_size=page_size, status=status)
+    payments_list, total = await payments_service.list_payments_admin(
+        db, page=page, page_size=page_size, status=status
+    )
     return {
         "items": [serialize_admin(p) for p in payments_list],
         "total": total,
@@ -308,26 +302,15 @@ async def reject_payment(
     user: Annotated[User, Depends(require_permission(Permission.PAYMENTS_REJECT))],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict[str, Any]:
-    # Row-locked: a concurrent confirmation holds the same lock, so exactly
-    # one of confirm/reject wins. Without the lock a reject could overwrite
-    # an already-CONFIRMED payment after its deposit was applied to the order.
-    try:
-        payment = await payments_service.get_for_update(db, payment_id)
-    except Exception:
-        await db.rollback()
-        raise
+    payment = await payments_service.get_payment(db, payment_id)
     old_status = str(PaymentStatus(payment.status))
-    try:
-        payment = await payments_service.reject_payment(
-            db,
-            payment,
-            reason_code=payload.reason_code,
-            reason_note=payload.reason_note,
-            reviewer_user_id=user.id,
-        )
-    except Exception:
-        await db.rollback()
-        raise
+    payment = await payments_service.reject_payment(
+        db,
+        payment,
+        reason_code=payload.reason_code,
+        reason_note=payload.reason_note,
+        reviewer_user_id=user.id,
+    )
     request_id_ctx, ip_address, user_agent = _get_request_context(request)
     await record_event(
         db,

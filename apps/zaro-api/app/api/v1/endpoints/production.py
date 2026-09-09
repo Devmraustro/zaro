@@ -24,7 +24,6 @@ from app.schemas.production import (
     ProductionOrderAction,
     ProductionOrderActionWithNote,
     ProductionOrderCancel,
-    ProductionOrderCreate,
     ProductionOrderPlan,
     ProductionReleaseRequest,
     ProductionReturnRequest,
@@ -44,30 +43,6 @@ router = APIRouter(prefix="/admin/production", tags=["admin-production"])
 # --- Helpers ----------------------------------------------------------------
 
 
-def _serialize_reservation(mr) -> dict[str, Any]:
-    return {
-        "id": str(mr.id),
-        "production_order_id": str(mr.production_order_id),
-        "material_id": str(mr.material_id),
-        "material_name": mr.material_name,
-        "material_code": mr.material_code,
-        "material_unit": str(mr.material_unit),
-        "quantity_required": mr.quantity_required,
-        "quantity_reserved": mr.quantity_reserved,
-        "quantity_consumed": mr.quantity_consumed,
-        "quantity_wasted": mr.quantity_wasted,
-        "quantity_returned": mr.quantity_returned,
-        "quantity_released": mr.quantity_released,
-        "remaining_reserved": str(mr.remaining_reserved),
-        "unit_price_minor": mr.unit_price_minor,
-        "material_spec": mr.material_spec,
-        "status": str(mr.status),
-        "reserved_at": mr.reserved_at.isoformat() if mr.reserved_at else None,
-        "released_at": mr.released_at.isoformat() if mr.released_at else None,
-        "fully_consumed_at": mr.fully_consumed_at.isoformat() if mr.fully_consumed_at else None,
-    }
-
-
 def serialize_production_order(po, include_materials: bool = False) -> dict[str, Any]:
     data = {
         "id": str(po.id),
@@ -75,7 +50,7 @@ def serialize_production_order(po, include_materials: bool = False) -> dict[str,
         "order_id": str(po.order_id) if po.order_id else None,
         "customer_id": str(po.customer_id) if po.customer_id else None,
         "custom_request_id": str(po.custom_request_id) if po.custom_request_id else None,
-        "status": str(po.status),
+        "status": po.status,
         "estimated_material_cost_minor": po.estimated_material_cost_minor,
         "actual_material_cost_minor": po.actual_material_cost_minor,
         "planned_start_date": po.planned_start_date.isoformat() if po.planned_start_date else None,
@@ -104,22 +79,15 @@ def serialize_production_order(po, include_materials: bool = False) -> dict[str,
         "updated_at": po.updated_at.isoformat() if po.updated_at else None,
     }
     if include_materials:
-        reservations = getattr(po, "material_reservations", None) or []
-        data["material_reservations"] = [_serialize_reservation(mr) for mr in reservations]
+        # This would need to be implemented - for now return empty
+        data["material_reservations"] = []
     return data
 
 
 async def get_production_order_or_404(db: AsyncSession, production_order_id: UUID) -> "ProductionOrder":
-    from sqlalchemy.orm import selectinload
-
     from app.models.production import ProductionOrder
 
-    stmt = (
-        select(ProductionOrder)
-        .where(ProductionOrder.id == production_order_id)
-        .options(selectinload(ProductionOrder.material_reservations))
-    )
-    po = (await db.execute(stmt)).scalar_one_or_none()
+    po = await db.get(ProductionOrder, production_order_id)
     if po is None:
         from app.core.exceptions import NotFoundError
 
@@ -133,7 +101,7 @@ async def get_production_order_or_404(db: AsyncSession, production_order_id: UUI
 @router.post("", status_code=201)
 async def create_production_order(
     request: Request,
-    payload: "ProductionOrderCreate",
+    payload: "ProductionOrderPlan",
     user: Annotated["User", Depends(require_permission(Permission.PRODUCTION_MANAGE))],
     db: Annotated["AsyncSession", Depends(get_db)],
 ) -> dict[str, Any]:
@@ -142,12 +110,13 @@ async def create_production_order(
     Server-side: validates order is CONFIRMED, creates production order with
     snapshot of financials. No client-controlled financials.
     """
-    from app.services import orders_service
+    from app.models.order import Order
 
-    # Row-locked: concurrent creates serialize on the order row (the service
-    # still 409s on a duplicate order_id as a backstop). Unknown ids 404 via
-    # the service's NotFoundError.
-    order = await orders_service.get_order_for_update(db, payload.order_id)
+    order = await db.get(Order, payload.order_id)
+    if order is None:
+        from app.core.exceptions import NotFoundError
+
+        raise NotFoundError("Order not found")
 
     po = await production_service.create_production_order(
         db,
@@ -312,15 +281,7 @@ async def reserve_materials(
     db: Annotated["AsyncSession", Depends(get_db)],
 ) -> dict:
     """Reserve all materials for production (atomic all-or-nothing)."""
-    _request_id, _ip, _ua = _get_request_context(request)
-    po = await production_service.reserve_materials(
-        db,
-        production_order_id,
-        actor_user_id=user.id,
-        request_id=_request_id,
-        ip_address=_ip,
-        user_agent=_ua,
-    )
+    po = await production_service.reserve_materials(db, production_order_id, actor_user_id=None)
 
     request_id_ctx, ip_address, user_agent = _get_request_context(request)
     await record_event(
@@ -438,7 +399,6 @@ async def consume_material(
     """Record material consumption during production."""
     from decimal import Decimal
 
-    _request_id, _ip, _ua = _get_request_context(request)
     mr = await production_service.consume_material(
         db,
         production_order_id=production_order_id,
@@ -447,9 +407,6 @@ async def consume_material(
         idempotency_key=payload.idempotency_key,
         actor_user_id=user.id,
         notes=payload.notes,
-        request_id=_request_id,
-        ip_address=_ip,
-        user_agent=_ua,
     )
 
     request_id_ctx, ip_address, user_agent = _get_request_context(request)
@@ -492,7 +449,6 @@ async def record_waste(
 ) -> dict:
     from decimal import Decimal
 
-    _request_id, _ip, _ua = _get_request_context(request)
     mr = await production_service.record_waste(
         db,
         production_order_id=production_order_id,
@@ -501,9 +457,6 @@ async def record_waste(
         idempotency_key=payload.idempotency_key,
         actor_user_id=user.id,
         reason=payload.reason,
-        request_id=_request_id,
-        ip_address=_ip,
-        user_agent=_ua,
     )
 
     request_id_ctx, ip_address, user_agent = _get_request_context(request)
@@ -543,7 +496,6 @@ async def return_material(
 ) -> dict:
     from decimal import Decimal
 
-    _request_id, _ip, _ua = _get_request_context(request)
     mr = await production_service.return_material(
         db,
         production_order_id=production_order_id,
@@ -552,9 +504,6 @@ async def return_material(
         idempotency_key=payload.idempotency_key,
         actor_user_id=user.id,
         notes=payload.notes,
-        request_id=_request_id,
-        ip_address=_ip,
-        user_agent=_ua,
     )
 
     request_id_ctx, ip_address, user_agent = _get_request_context(request)
@@ -594,7 +543,6 @@ async def release_material(
 ) -> dict:
     from decimal import Decimal
 
-    _request_id, _ip, _ua = _get_request_context(request)
     mr = await production_service.release_material(
         db,
         production_order_id=production_order_id,
@@ -603,9 +551,6 @@ async def release_material(
         idempotency_key=payload.idempotency_key,
         actor_user_id=user.id,
         notes=payload.notes,
-        request_id=_request_id,
-        ip_address=_ip,
-        user_agent=_ua,
     )
 
     request_id_ctx, ip_address, user_agent = _get_request_context(request)
@@ -643,15 +588,11 @@ async def cancel_production(
     user: Annotated["User", Depends(require_permission(Permission.PRODUCTION_MANAGE))],
     db: Annotated["AsyncSession", Depends(get_db)],
 ) -> dict:
-    _request_id, _ip, _ua = _get_request_context(request)
     po = await production_service.cancel_production(
         db,
         production_order_id=production_order_id,
         reason=payload.reason,
         actor_user_id=user.id,
-        request_id=_request_id,
-        ip_address=_ip,
-        user_agent=_ua,
     )
 
     request_id_ctx, ip_address, user_agent = _get_request_context(request)

@@ -80,20 +80,6 @@ async def get_quote(db: AsyncSession, quote_id: uuid.UUID) -> Quote:
     return quote
 
 
-async def get_quote_for_update(db: AsyncSession, quote_id: uuid.UUID) -> Quote:
-    """Load and row-lock a quote for a mutating decision (accept/reject/send/cancel/view).
-
-    Serializes concurrent decisions on the same quote so exactly one wins;
-    the loser observes the already-moved state and fails with a clean 4xx
-    instead of double-converting or double-auditing.
-    """
-    stmt = select(Quote).where(Quote.id == quote_id).with_for_update()
-    quote = (await db.execute(stmt)).scalar_one_or_none()
-    if quote is None:
-        raise NotFoundError("Quote not found")
-    return quote
-
-
 async def get_lines(db: AsyncSession, quote_id: uuid.UUID) -> list[QuoteLine]:
     stmt = select(QuoteLine).where(QuoteLine.quote_id == quote_id).order_by(QuoteLine.position)
     return list((await db.execute(stmt)).scalars().all())
@@ -183,47 +169,42 @@ async def create_quote(
         deposit_percentage=pct,
     )
 
-    from app.services.references import next_quote_number, run_with_unique_retry
+    from app.services.references import next_quote_number
 
-    async def _insert() -> Quote:
-        candidate = Quote(
-            quote_number=await next_quote_number(db),
-            customer_id=customer_id,
-            custom_request_id=custom_request_id,
-            status=QuoteStatus.DRAFT,
-            currency="DZD",
-            subtotal_minor=totals["subtotal_minor"],
-            discount_minor=totals["discount_minor"],
-            delivery_fee_minor=totals["delivery_fee_minor"],
-            total_minor=totals["total_minor"],
-            deposit_percentage=pct,
-            deposit_amount_minor=totals["deposit_amount_minor"],
-            balance_amount_minor=totals["balance_amount_minor"],
-            notes=notes,
-            valid_until=valid_until,
-            created_by=created_by,
-        )
-        db.add(candidate)
-        await db.flush()
+    quote = Quote(
+        quote_number=await next_quote_number(db),
+        customer_id=customer_id,
+        custom_request_id=custom_request_id,
+        status=QuoteStatus.DRAFT,
+        currency="DZD",
+        subtotal_minor=totals["subtotal_minor"],
+        discount_minor=totals["discount_minor"],
+        delivery_fee_minor=totals["delivery_fee_minor"],
+        total_minor=totals["total_minor"],
+        deposit_percentage=pct,
+        deposit_amount_minor=totals["deposit_amount_minor"],
+        balance_amount_minor=totals["balance_amount_minor"],
+        notes=notes,
+        valid_until=valid_until,
+        created_by=created_by,
+    )
+    db.add(quote)
+    await db.flush()
 
-        for position, (line, line_total) in enumerate(zip(lines, line_totals, strict=True)):
-            db.add(
-                QuoteLine(
-                    quote_id=candidate.id,
-                    position=position,
-                    description=line.description,
-                    quantity=line.quantity,
-                    unit_label=line.unit_label,
-                    unit_price_minor=line.unit_price_minor,
-                    line_total_minor=line_total,
-                )
+    for position, (line, line_total) in enumerate(zip(lines, line_totals, strict=True)):
+        db.add(
+            QuoteLine(
+                quote_id=quote.id,
+                position=position,
+                description=line.description,
+                quantity=line.quantity,
+                unit_label=line.unit_label,
+                unit_price_minor=line.unit_price_minor,
+                line_total_minor=line_total,
             )
-        await db.flush()
-        return candidate
-
-    # Concurrent creations may compute the same quote number; retry with a
-    # regenerated number instead of failing with a 500.
-    return await run_with_unique_retry(db, _insert)
+        )
+    await db.flush()
+    return quote
 
 
 def validate_transition(current: QuoteStatus, target: QuoteStatus) -> None:
@@ -241,11 +222,10 @@ def ensure_not_expired(quote: Quote) -> None:
     Expiry is evaluated lazily at every mutating operation; the row itself is
     only persisted as EXPIRED by :func:`expire_if_past_validity`.
     """
-    if quote.status in (
-        QuoteStatus.SENT,
-        QuoteStatus.VIEWED,
-        QuoteStatus.ACCEPTED,
-    ) and quote.valid_until <= datetime.now(UTC):
+    if (
+        quote.status in (QuoteStatus.SENT, QuoteStatus.VIEWED, QuoteStatus.ACCEPTED)
+        and quote.valid_until <= datetime.now(UTC)
+    ):
         raise InvalidStateTransition(
             "Quote has expired",
             details={"current": "expired", "allowed": []},

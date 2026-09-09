@@ -24,7 +24,9 @@ from app.models.enums import PAYMENT_STATUS_TRANSITIONS, OrderStatus, PaymentMet
 from app.models.order import Order
 from app.models.payment import Payment, PaymentConfiguration
 
-_ACTIVE_STATUSES = frozenset({PaymentStatus.PENDING, PaymentStatus.PROOF_UPLOADED, PaymentStatus.UNDER_REVIEW})
+_ACTIVE_STATUSES = frozenset(
+    {PaymentStatus.PENDING, PaymentStatus.PROOF_UPLOADED, PaymentStatus.UNDER_REVIEW}
+)
 
 
 # --- Configuration ------------------------------------------------------------
@@ -128,27 +130,22 @@ async def create_deposit_claim(db: AsyncSession, order: Order, *, customer_id: u
     if not config.account_identifier:
         raise ValidationFailedError("CCP payment instructions are not configured yet")
 
-    from app.services.references import next_payment_reference, run_with_unique_retry
+    from app.services.references import next_payment_reference
 
-    async def _insert() -> Payment:
-        candidate = Payment(
-            payment_reference=await next_payment_reference(db),
-            order_id=order.id,
-            customer_id=customer_id or order.customer_id,
-            method=PaymentMethod.CCP,
-            status=PaymentStatus.PENDING,
-            amount_minor=order.deposit_required_minor,  # authoritative amount
-            currency="DZD",
-            ccp_account_holder_snapshot=config.account_holder,
-            ccp_account_identifier_snapshot=config.account_identifier,
-        )
-        db.add(candidate)
-        await db.flush()
-        return candidate
-
-    # Reference collisions regenerate-and-retry; a genuine duplicate claim
-    # surfaces as 409 via the partial unique index backstop.
-    return await run_with_unique_retry(db, _insert, conflict_message="A deposit claim already exists for this order")
+    payment = Payment(
+        payment_reference=await next_payment_reference(db),
+        order_id=order.id,
+        customer_id=customer_id or order.customer_id,
+        method=PaymentMethod.CCP,
+        status=PaymentStatus.PENDING,
+        amount_minor=order.deposit_required_minor,  # authoritative amount
+        currency="DZD",
+        ccp_account_holder_snapshot=config.account_holder,
+        ccp_account_identifier_snapshot=config.account_identifier,
+    )
+    db.add(payment)
+    await db.flush()
+    return payment
 
 
 def validate_transition(current: PaymentStatus, target: PaymentStatus) -> None:
@@ -197,9 +194,7 @@ async def submit_for_review(db: AsyncSession, payment: Payment) -> Payment:
     return payment
 
 
-async def confirm_payment(
-    db: AsyncSession, payment_id: uuid.UUID, *, reviewer_user_id: uuid.UUID
-) -> tuple[Payment, Order]:
+async def confirm_payment(db: AsyncSession, payment_id: uuid.UUID, *, reviewer_user_id: uuid.UUID) -> tuple[Payment, Order]:
     """Confirm a deposit payment and update the order -- atomically.
 
     Locking protocol (caller's transaction):

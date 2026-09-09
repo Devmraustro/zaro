@@ -10,11 +10,9 @@ from app.api.v1.endpoints import (
     customers,
     files,
     health,
-    inventory,
     materials,
     orders,
     payments,
-    production,
     quotes,
 )
 
@@ -40,5 +38,3 @@ api_router.include_router(cost_estimates.router)
 api_router.include_router(quotes.admin_router)
 api_router.include_router(orders.admin_router)
 api_router.include_router(payments.admin_router)
-api_router.include_router(inventory.router)
-api_router.include_router(production.router)

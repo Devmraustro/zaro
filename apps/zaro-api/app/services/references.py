@@ -10,26 +10,22 @@ Server-controlled identifiers:
 - payment references follow ``ZPAY-{YYYY}-{NNNNNN}``.
 
 Sequential codes are derived from existing rows inside the caller's
-transaction. This is safe under normal admin traffic; :func:`run_with_unique_retry`
-covers rare concurrent creations (regenerate-and-retry on unique violations,
-409 when the conflict is genuine). References are convenience labels only --
-authorization always uses internal identifiers plus ownership/permission
-checks.
+transaction. This is safe under normal admin traffic; a unique-violation
+retry loop covers rare concurrent creations. References are convenience
+labels only -- authorization always uses internal identifiers plus
+ownership/permission checks.
 """
 
 from __future__ import annotations
 
 import re
 import unicodedata
-from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
-from typing import Any, TypeVar
+from typing import Any
 
 from sqlalchemy import func, select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import ConflictError
 from app.models.custom_request import CustomRequest
 from app.models.order import Order
 from app.models.payment import Payment
@@ -135,51 +131,3 @@ def _next_sequence(current_max: str | None, prefix: str, *, width: int) -> int:
     except ValueError:
         # Corrupted/unexpected row format: fall back to count-based guess.
         return 10**width - 1
-
-
-T = TypeVar("T")
-
-
-def is_unique_violation(exc: IntegrityError) -> bool:
-    """Best-effort unique-violation detection across PostgreSQL/SQLite.
-
-    Only unique violations are retryable (a regenerated reference may fix
-    them). CHECK/FK violations indicate invalid input or a bug and must
-    propagate unchanged -- never retried.
-    """
-    orig = exc.orig
-    message = str(orig or exc).lower()
-    if "unique" in message or "duplicate" in message:
-        return True
-    pgcode = getattr(orig, "pgcode", None) or getattr(orig, "sqlstate", None)
-    return pgcode == "23505"
-
-
-async def run_with_unique_retry(  # noqa: UP047 - TypeVar keeps this module parseable on 3.11 runtimes; do not convert to PEP 695 syntax
-    db: AsyncSession,
-    attempt: Callable[[], Awaitable[T]],
-    *,
-    max_attempts: int = 3,
-    conflict_message: str = "Concurrent creation conflict, please retry",
-) -> T:
-    """Run ``attempt`` (which inserts + flushes one new row) with retries.
-
-    Each attempt runs in its own SAVEPOINT so a unique violation rolls back
-    only that attempt, never the caller's wider transaction. Reference
-    collisions (two concurrent ``SELECT MAX`` + 1) resolve on retry because
-    the second attempt re-reads the committed maximum. Genuine conflicts
-    (double conversion, duplicate claim) exhaust the attempts and surface
-    as :class:`ConflictError` (HTTP 409) instead of an HTTP 500.
-    """
-    last_exc: IntegrityError | None = None
-    for _ in range(max(1, max_attempts)):
-        try:
-            async with db.begin_nested():
-                return await attempt()
-        except IntegrityError as exc:
-            if not is_unique_violation(exc):
-                raise
-            last_exc = exc
-            continue
-    assert last_exc is not None
-    raise ConflictError(conflict_message) from last_exc

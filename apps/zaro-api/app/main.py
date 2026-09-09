@@ -39,7 +39,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=_CORS_ALLOW_HEADERS,
-        expose_headers=["X-Request-ID"],
     )
     app.add_middleware(AllowedHostsMiddleware, settings=cfg)
     app.add_middleware(BodySizeLimitMiddleware, settings=cfg)
