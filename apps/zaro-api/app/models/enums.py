@@ -185,7 +185,9 @@ QUOTE_TRANSITIONS: dict[QuoteStatus, frozenset[QuoteStatus]] = {
     QuoteStatus.SENT: frozenset(
         {QuoteStatus.VIEWED, QuoteStatus.ACCEPTED, QuoteStatus.REJECTED, QuoteStatus.CANCELLED}
     ),
-    QuoteStatus.VIEWED: frozenset({QuoteStatus.ACCEPTED, QuoteStatus.REJECTED, QuoteStatus.CANCELLED}),
+    QuoteStatus.VIEWED: frozenset(
+        {QuoteStatus.ACCEPTED, QuoteStatus.REJECTED, QuoteStatus.CANCELLED}
+    ),
     QuoteStatus.ACCEPTED: frozenset({QuoteStatus.DEPOSIT_REQUIRED}),
     QuoteStatus.DEPOSIT_REQUIRED: frozenset({QuoteStatus.CONVERTED}),
     QuoteStatus.CONVERTED: frozenset(),
@@ -205,7 +207,9 @@ class OrderStatus(StrEnum):
 
 
 ORDER_TRANSITIONS: dict[OrderStatus, frozenset[OrderStatus]] = {
-    OrderStatus.PENDING_DEPOSIT: frozenset({OrderStatus.CONFIRMED, OrderStatus.CANCELLED}),
+    OrderStatus.PENDING_DEPOSIT: frozenset(
+        {OrderStatus.CONFIRMED, OrderStatus.CANCELLED}
+    ),
     OrderStatus.CONFIRMED: frozenset(),  # future phases append production states here
     OrderStatus.CANCELLED: frozenset(),
 }
@@ -228,15 +232,12 @@ PAYMENT_STATUS_TRANSITIONS: dict[PaymentStatus, frozenset[PaymentStatus]] = {
     PaymentStatus.PENDING: frozenset(
         {PaymentStatus.PROOF_UPLOADED, PaymentStatus.UNDER_REVIEW, PaymentStatus.CANCELLED}
     ),
-    # PROOF_UPLOADED -> PROOF_UPLOADED is proof replacement: the customer may
-    # swap the file before submitting for review (each upload is audited).
     PaymentStatus.PROOF_UPLOADED: frozenset(
-        {PaymentStatus.PROOF_UPLOADED, PaymentStatus.UNDER_REVIEW, PaymentStatus.CANCELLED}
+        {PaymentStatus.UNDER_REVIEW, PaymentStatus.CANCELLED}
     ),
-    # UNDER_REVIEW -> CANCELLED exists ONLY for the server-side order-cancellation
-    # linkage (cancelling an order cancels its unresolved claim). No client
-    # operation targets CANCELLED directly.
-    PaymentStatus.UNDER_REVIEW: frozenset({PaymentStatus.CONFIRMED, PaymentStatus.REJECTED, PaymentStatus.CANCELLED}),
+    PaymentStatus.UNDER_REVIEW: frozenset(
+        {PaymentStatus.CONFIRMED, PaymentStatus.REJECTED}
+    ),
     # CONFIRMED is irreversible by design; corrections go through a separate
     # reversal workflow in a future phase.
     PaymentStatus.CONFIRMED: frozenset(),
@@ -275,7 +276,6 @@ class StockMovementType(StrEnum):
     Enumeration of all valid stock movement types.
     Used in stock_movements.movement_type CHECK constraint and model validation.
     """
-
     PURCHASE = "purchase"
     RESERVE = "reserve"
     RELEASE = "release"
@@ -292,7 +292,6 @@ class ProductionOrderStatus(StrEnum):
     Used in production_orders.status CHECK constraint and model validation.
     Matches PostgreSQL productionorderstatus type.
     """
-
     PENDING = "pending"
     PLANNED = "planned"
     MATERIALS_RESERVED = "materials_reserved"
@@ -306,35 +305,17 @@ class ProductionOrderStatus(StrEnum):
 
 # Allowed forward transitions of the production order lifecycle.
 # Terminal states (COMPLETED, CANCELLED) map to an empty set.
-#
-# - QUALITY_CHECK -> IN_PRODUCTION is the rework path: a rejected QC decision
-#   returns the order to production instead of approving it.
-# - Every non-terminal state may transition to CANCELLED (server-side
-#   cancellation only; there is no client-driven "set status" operation).
 PRODUCTION_ORDER_TRANSITIONS: dict[ProductionOrderStatus, frozenset[ProductionOrderStatus]] = {
-    ProductionOrderStatus.PENDING: frozenset({ProductionOrderStatus.PLANNED, ProductionOrderStatus.CANCELLED}),
-    ProductionOrderStatus.PLANNED: frozenset(
-        {ProductionOrderStatus.MATERIALS_RESERVED, ProductionOrderStatus.CANCELLED}
-    ),
-    ProductionOrderStatus.MATERIALS_RESERVED: frozenset(
-        {ProductionOrderStatus.IN_PRODUCTION, ProductionOrderStatus.CANCELLED}
-    ),
-    ProductionOrderStatus.IN_PRODUCTION: frozenset(
-        {
-            ProductionOrderStatus.QUALITY_CHECK,
-            ProductionOrderStatus.PAUSED,
-            ProductionOrderStatus.CANCELLED,
-        }
-    ),
-    ProductionOrderStatus.QUALITY_CHECK: frozenset(
-        {
-            ProductionOrderStatus.READY,
-            ProductionOrderStatus.IN_PRODUCTION,
-            ProductionOrderStatus.CANCELLED,
-        }
-    ),
-    ProductionOrderStatus.PAUSED: frozenset({ProductionOrderStatus.IN_PRODUCTION, ProductionOrderStatus.CANCELLED}),
-    ProductionOrderStatus.READY: frozenset({ProductionOrderStatus.COMPLETED, ProductionOrderStatus.CANCELLED}),
+    ProductionOrderStatus.PENDING: frozenset({ProductionOrderStatus.PLANNED}),
+    ProductionOrderStatus.PLANNED: frozenset({ProductionOrderStatus.MATERIALS_RESERVED}),
+    ProductionOrderStatus.MATERIALS_RESERVED: frozenset({ProductionOrderStatus.IN_PRODUCTION}),
+    ProductionOrderStatus.IN_PRODUCTION: frozenset({
+        ProductionOrderStatus.QUALITY_CHECK,
+        ProductionOrderStatus.PAUSED,
+    }),
+    ProductionOrderStatus.QUALITY_CHECK: frozenset({ProductionOrderStatus.READY}),
+    ProductionOrderStatus.PAUSED: frozenset({ProductionOrderStatus.IN_PRODUCTION}),
+    ProductionOrderStatus.READY: frozenset({ProductionOrderStatus.COMPLETED}),
     ProductionOrderStatus.COMPLETED: frozenset(),
     ProductionOrderStatus.CANCELLED: frozenset(),
 }
@@ -342,7 +323,6 @@ PRODUCTION_ORDER_TRANSITIONS: dict[ProductionOrderStatus, frozenset[ProductionOr
 
 class ProductionMaterialReservationStatus(StrEnum):
     """Status of a production material reservation."""
-
     PENDING = "pending"
     RESERVED = "reserved"
     CONSUMED = "consumed"
@@ -351,16 +331,17 @@ class ProductionMaterialReservationStatus(StrEnum):
 
 # Allowed forward transitions of the production material reservation lifecycle.
 # Terminal states (CONSUMED, RELEASED) map to an empty set.
-PRODUCTION_MATERIAL_RESERVATION_TRANSITIONS: dict[
-    ProductionMaterialReservationStatus, frozenset[ProductionMaterialReservationStatus]
-] = {
+PRODUCTION_MATERIAL_RESERVATION_TRANSITIONS: dict[ProductionMaterialReservationStatus, frozenset[ProductionMaterialReservationStatus]] = {
     ProductionMaterialReservationStatus.PENDING: frozenset({ProductionMaterialReservationStatus.RESERVED}),
-    ProductionMaterialReservationStatus.RESERVED: frozenset(
-        {
-            ProductionMaterialReservationStatus.CONSUMED,
-            ProductionMaterialReservationStatus.RELEASED,
-        }
-    ),
+    ProductionMaterialReservationStatus.RESERVED: frozenset({
+        ProductionMaterialReservationStatus.CONSUMED,
+        ProductionMaterialReservationStatus.RELEASED,
+    }),
     ProductionMaterialReservationStatus.CONSUMED: frozenset(),
     ProductionMaterialReservationStatus.RELEASED: frozenset(),
 }
+
+
+ALL_PRODUCTION_TRANSITIONS: frozenset[ProductionOrderStatus] = frozenset(
+    ProductionOrderStatus
+)

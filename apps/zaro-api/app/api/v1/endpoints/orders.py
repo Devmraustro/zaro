@@ -9,7 +9,6 @@ from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import _get_request_context, get_current_user, require_permission
@@ -148,8 +147,9 @@ async def open_deposit_claim(
     silently ignored.
     """
     order = await _staff_or_owner_order(db, order_id, user, Permission.PAYMENTS_REVIEW)
-    customer_uuid = UUID(str(order.customer_id)) if order.customer_id is not None else None
-    payment = await payments_service.create_deposit_claim(db, order, customer_id=customer_uuid)
+    payment = await payments_service.create_deposit_claim(
+        db, order, customer_id=order.customer_id if order.customer_id is None else __import__("uuid").UUID(str(order.customer_id))
+    )
     request_id_ctx, ip_address, user_agent = _get_request_context(request)
     await record_event(
         db,
@@ -218,35 +218,18 @@ async def cancel_order(
     user: Annotated[User, Depends(require_permission(Permission.ORDERS_CANCEL))],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict[str, Any]:
-    # Row-locked: cancellation serializes against concurrent payment
-    # confirmation on the same order row.
-    order = await orders_service.get_order_for_update(db, order_id)
+    order = await orders_service.get_order(db, order_id)
     old_status = str(order.status)
     order = await orders_service.cancel_order(db, order, reason=payload.reason)
 
     # Any unresolved deposit claim is cancelled with the order (append-only:
-    # the claim row stays, status moves to cancelled through the validated
-    # state machine). Locked: a concurrent reviewer decision on the same
-    # claim must serialize against this linkage.
-    from app.models.payment import Payment
-
+    # the claim row stays, status moves to cancelled).
     active_claim = await payments_service.find_active_for_order(db, order.id)
-    cancelled_claim_id: str | None = None
     if active_claim is not None:
         from app.models.enums import PaymentStatus
 
-        locked_claim = (
-            await db.execute(select(Payment).where(Payment.id == active_claim.id).with_for_update())
-        ).scalar_one_or_none()
-        if locked_claim is not None and PaymentStatus(locked_claim.status) in (
-            PaymentStatus.PENDING,
-            PaymentStatus.PROOF_UPLOADED,
-            PaymentStatus.UNDER_REVIEW,
-        ):
-            payments_service.validate_transition(PaymentStatus(locked_claim.status), PaymentStatus.CANCELLED)
-            locked_claim.status = PaymentStatus.CANCELLED
-            db.add(locked_claim)
-            cancelled_claim_id = str(locked_claim.id)
+        active_claim.status = PaymentStatus.CANCELLED
+        db.add(active_claim)
 
     request_id_ctx, ip_address, user_agent = _get_request_context(request)
     await record_event(
@@ -259,25 +242,7 @@ async def cancel_order(
         request_id=request_id_ctx,
         ip_address=ip_address,
         user_agent=user_agent,
-        metadata={
-            "order_number": order.order_number,
-            "old_status": old_status,
-            "new_status": "cancelled",
-            "cancelled_claim_id": cancelled_claim_id,
-        },
+        metadata={"order_number": order.order_number, "old_status": old_status, "new_status": "cancelled"},
     )
-    if cancelled_claim_id is not None:
-        await record_event(
-            db,
-            action=AuditAction.PAYMENT_CANCELLED,
-            result=AuditResult.SUCCESS,
-            actor_user_id=user.id,
-            resource_type="payment",
-            resource_id=cancelled_claim_id,
-            request_id=request_id_ctx,
-            ip_address=ip_address,
-            user_agent=user_agent,
-            metadata={"order_number": order.order_number, "reason": "order_cancelled"},
-        )
     await db.commit()
     return serialize_admin(order, await orders_service.get_lines(db, order.id))

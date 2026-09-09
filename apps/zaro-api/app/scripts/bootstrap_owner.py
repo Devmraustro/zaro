@@ -39,18 +39,14 @@ async def _bootstrap_owner() -> None:
     print("====================")
     print()
 
-    email = input("Owner email: ").strip().lower()
-    if not email or "@" not in email:
-        print("Error: a valid email is required")
+    email = input("Owner email: ").strip()
+    if not email:
+        print("Error: email is required")
         sys.exit(1)
 
     password = getpass.getpass("Owner password: ")
-    from app.core.security import validate_password_strength
-
-    try:
-        validate_password_strength(password, min_length=settings.password_min_length)
-    except Exception as exc:
-        print(f"Error: {exc}")
+    if len(password) < 8:
+        print("Error: password must be at least 8 characters")
         sys.exit(1)
 
     confirm = getpass.getpass("Confirm password: ")

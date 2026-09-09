@@ -41,20 +41,13 @@ async def create_material(
     unit: str,
     notes: str | None,
 ) -> Material:
-    from app.services.references import run_with_unique_retry
-
     existing = (await db.execute(select(Material).where(Material.code == code))).scalar_one_or_none()
     if existing is not None:
         raise ConflictError("A material with this code already exists")
-
-    async def _insert() -> Material:
-        candidate = Material(name=name, code=code, category=category, unit=unit, notes=notes)
-        db.add(candidate)
-        await db.flush()
-        return candidate
-
-    # A concurrent insert with the same code resolves to 409, never 500.
-    return await run_with_unique_retry(db, _insert, conflict_message="A material with this code already exists")
+    material = Material(name=name, code=code, category=category, unit=unit, notes=notes)
+    db.add(material)
+    await db.flush()
+    return material
 
 
 async def update_material(db: AsyncSession, material: Material, changes: dict) -> Material:
@@ -76,8 +69,6 @@ async def add_price(
 ) -> MaterialPrice:
     from sqlalchemy.exc import IntegrityError
 
-    from app.services.references import is_unique_violation
-
     price = MaterialPrice(
         material_id=material.id,
         effective_from=effective_from or datetime.now(UTC),
@@ -85,16 +76,11 @@ async def add_price(
         currency=currency,
         created_by=created_by,
     )
+    db.add(price)
     try:
-        async with db.begin_nested():
-            db.add(price)
-            await db.flush()
+        await db.flush()
     except IntegrityError as exc:
-        # SAVEPOINT-scoped: only this insert is undone, never the caller's
-        # wider transaction (a full rollback here would silently discard the
-        # endpoint's earlier writes, e.g. audit events).
-        if not is_unique_violation(exc):
-            raise
+        await db.rollback()
         raise ConflictError("A price with this effective date already exists for this material") from exc
     return price
 

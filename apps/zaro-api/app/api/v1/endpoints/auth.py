@@ -63,9 +63,9 @@ _GENERIC_RESET_RESULT = "If the reset token is valid, the password has been upda
 
 
 def _cookie_secure(settings: Settings) -> bool:
-    # Single source of truth: Secure cookies in staging AND production.
-    # (A local divergent check previously dropped Secure in staging.)
-    return settings.cookie_secure
+    if settings.cookie_secure_in_production_only:
+        return settings.is_production
+    return True
 
 
 def _set_auth_cookies(response: Response, settings: Settings, refresh_secret: str) -> None:

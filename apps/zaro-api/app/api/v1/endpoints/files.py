@@ -10,7 +10,6 @@ Security model (extends the Phase 1.4 storage foundation):
   visibility is public AND purpose is product_media.
 """
 
-from time import time
 from typing import Annotated, Any
 from uuid import UUID
 
@@ -176,7 +175,7 @@ async def get_access_url(
     expires_at = int(token.split("|")[0])
     return {
         "url_path": f"/api/v1/files/{asset.id}/content?token={token}",
-        "expires_in": max(expires_at - int(time()), 0),
+        "expires_in": max(expires_at - int(__import__("time").time()), 0),
     }
 
 
@@ -193,9 +192,7 @@ async def _authorize_private_access(db: AsyncSession, asset: FileAsset, user: Us
             return
         if user.role == "customer":
             linked = (await db.execute(select(Customer).where(Customer.user_id == user.id))).scalar_one_or_none()
-            by_email = (
-                await db.execute(select(Customer).where(Customer.email == user.email.lower()))
-            ).scalar_one_or_none()
+            by_email = (await db.execute(select(Customer).where(Customer.email == user.email.lower()))).scalar_one_or_none()
             customer = linked or by_email
             if customer is not None and asset.customer_id == customer.id:
                 return

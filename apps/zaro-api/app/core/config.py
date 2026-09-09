@@ -64,10 +64,7 @@ class Settings(BaseSettings):
     # --- HTTP --------------------------------------------------------------
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:3001"])
     # Reject request bodies larger than this before parsing (bytes).
-    # Must stay above the file-storage upload ceiling (5 MiB) plus multipart
-    # framing overhead, otherwise legitimate uploads die with 413 in the
-    # middleware before ever reaching validation.
-    max_request_bytes: int = 6 * 1024 * 1024
+    max_request_bytes: int = 1024 * 1024
 
     # --- File Storage ------------------------------------------------------
     storage_backend: StorageBackendName = "local"

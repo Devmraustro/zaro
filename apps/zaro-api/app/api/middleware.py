@@ -16,13 +16,10 @@ logger = get_logger("app.api.middleware")
 
 _REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9_\-]{8,64}$")
 
-# CORS preflight is browser-driven and unauthenticated: never throttled.
+# Paths exempt from the global IP rate limit (health probes must never be
+# throttled; CORS preflight is browser-driven and unauthenticated).
+_RATE_LIMIT_EXEMPT_PATHS = {"/health/live", "/health/ready"}
 _RATE_LIMIT_EXEMPT_METHODS = {"OPTIONS"}
-
-
-def _rate_limit_exempt_paths(settings: Settings) -> set[str]:
-    """Health probes must never be throttled (liveness + readiness)."""
-    return {"/health/live", f"{settings.api_v1_prefix}/health"}
 
 
 def _sanitize_request_id(candidate: str | None) -> str:
@@ -168,7 +165,7 @@ class GlobalRateLimitMiddleware(BaseHTTPMiddleware):
         if (
             not settings.rate_limit_enabled
             or request.method in _RATE_LIMIT_EXEMPT_METHODS
-            or request.url.path in _rate_limit_exempt_paths(settings)
+            or request.url.path in _RATE_LIMIT_EXEMPT_PATHS
         ):
             return await call_next(request)
 

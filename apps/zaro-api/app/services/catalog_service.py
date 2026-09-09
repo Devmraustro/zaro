@@ -39,16 +39,11 @@ async def get_category(db: AsyncSession, category_id: UUID) -> Category:
 
 
 async def create_category(db: AsyncSession, *, name: str, description: str | None, sort_order: int) -> Category:
-    from app.services.references import run_with_unique_retry
-
-    async def _insert() -> Category:
-        slug = await unique_slug(db, Category, slugify(name))
-        candidate = Category(name=name, slug=slug, description=description, sort_order=sort_order)
-        db.add(candidate)
-        await db.flush()
-        return candidate
-
-    return await run_with_unique_retry(db, _insert)
+    slug = await unique_slug(db, Category, slugify(name))
+    category = Category(name=name, slug=slug, description=description, sort_order=sort_order)
+    db.add(category)
+    await db.flush()
+    return category
 
 
 async def update_category(db: AsyncSession, category: Category, changes: dict) -> Category:
@@ -89,43 +84,37 @@ def _materials_spec_list(materials_spec) -> list[dict] | None:
 
 
 async def create_product(db: AsyncSession, payload, *, actor_user_id: UUID) -> Product:
-    from app.services.references import run_with_unique_retry
-
     category = None
     if payload.category_id is not None:
         category = await get_category(db, payload.category_id)
-    category_name = category.name if category else None
 
-    async def _insert() -> Product:
-        slug = await unique_slug(db, Product, slugify(payload.name))
-        product_code = await next_product_code(db, category_name)
+    slug = await unique_slug(db, Product, slugify(payload.name))
+    product_code = await next_product_code(db, category.name if category else None)
 
-        candidate = Product(
-            name=payload.name,
-            slug=slug,
-            product_code=product_code,
-            description=payload.description,
-            category_id=payload.category_id,
-            dimensions=_dimensions_dict(payload.dimensions),
-            materials_spec=_materials_spec_list(payload.materials_spec),
-            weight_kg=payload.weight_kg,
-            production_time_days=payload.production_time_days,
-            stock_status=payload.stock_status,
-            delivery_available=payload.delivery_available,
-            delivery_info=payload.delivery_info,
-            meta_title=payload.meta_title,
-            meta_description=payload.meta_description,
-            status=ProductStatus.DRAFT,
-            created_by=actor_user_id,
-        )
-        # Initialize the collection in memory so post-flush/commit serialization
-        # never triggers a synchronous lazy load inside async context.
-        candidate.variants = []
-        db.add(candidate)
-        await db.flush()
-        return candidate
-
-    return await run_with_unique_retry(db, _insert)
+    product = Product(
+        name=payload.name,
+        slug=slug,
+        product_code=product_code,
+        description=payload.description,
+        category_id=payload.category_id,
+        dimensions=_dimensions_dict(payload.dimensions),
+        materials_spec=_materials_spec_list(payload.materials_spec),
+        weight_kg=payload.weight_kg,
+        production_time_days=payload.production_time_days,
+        stock_status=payload.stock_status,
+        delivery_available=payload.delivery_available,
+        delivery_info=payload.delivery_info,
+        meta_title=payload.meta_title,
+        meta_description=payload.meta_description,
+        status=ProductStatus.DRAFT,
+        created_by=actor_user_id,
+    )
+    # Initialize the collection in memory so post-flush/commit serialization
+    # never triggers a synchronous lazy load inside async context.
+    product.variants = []
+    db.add(product)
+    await db.flush()
+    return product
 
 
 async def get_product(db: AsyncSession, product_id: UUID) -> Product:
@@ -210,36 +199,17 @@ async def archive_product(db: AsyncSession, product: Product) -> Product:
 
 
 async def create_variant(db: AsyncSession, product: Product, payload) -> ProductVariant:
-    from app.services.references import run_with_unique_retry
-
-    # Variant ordinals derive from existing rows; the parent lock serializes
-    # concurrent creators and the ordinal scan picks the next free SKU.
-    await db.execute(select(Product).where(Product.id == product.id).with_for_update())
-
-    async def _insert() -> ProductVariant:
-        taken = set(
-            (await db.execute(select(ProductVariant.sku).where(ProductVariant.product_id == product.id)))
-            .scalars()
-            .all()
-        )
-        ordinal = len(taken)
-        sku = build_variant_sku(product.product_code, ordinal)
-        while sku in taken:
-            ordinal += 1
-            sku = build_variant_sku(product.product_code, ordinal)
-        candidate = ProductVariant(
-            product_id=product.id,
-            sku=sku,
-            label=payload.label,
-            attributes=payload.attributes,
-            price_override_minor=payload.price_override_minor,
-            sort_order=payload.sort_order,
-        )
-        db.add(candidate)
-        await db.flush()
-        return candidate
-
-    variant = await run_with_unique_retry(db, _insert)
+    sku = build_variant_sku(product.product_code, len(product.variants))
+    variant = ProductVariant(
+        product_id=product.id,
+        sku=sku,
+        label=payload.label,
+        attributes=payload.attributes,
+        price_override_minor=payload.price_override_minor,
+        sort_order=payload.sort_order,
+    )
+    db.add(variant)
+    await db.flush()
     product.variants.append(variant)
     return variant
 
@@ -272,11 +242,9 @@ async def list_public_products(
         count_stmt = count_stmt.where(Product.category_id == category.id)
 
     if search:
-        from app.services.customers_service import escape_like_literal
-
-        pattern = f"%{escape_like_literal(search.strip())}%"
-        stmt = stmt.where(Product.name.ilike(pattern, escape="\\"))
-        count_stmt = count_stmt.where(Product.name.ilike(pattern, escape="\\"))
+        pattern = f"%{search.strip()}%"
+        stmt = stmt.where(Product.name.ilike(pattern))
+        count_stmt = count_stmt.where(Product.name.ilike(pattern))
 
     if featured_only:
         stmt = stmt.where(Product.is_featured.is_(True))
@@ -333,11 +301,9 @@ async def list_admin_products(
         stmt = stmt.where(Product.status == status)
         count_stmt = count_stmt.where(Product.status == status)
     if search:
-        from app.services.customers_service import escape_like_literal
-
-        pattern = f"%{escape_like_literal(search.strip())}%"
-        stmt = stmt.where(Product.name.ilike(pattern, escape="\\"))
-        count_stmt = count_stmt.where(Product.name.ilike(pattern, escape="\\"))
+        pattern = f"%{search.strip()}%"
+        stmt = stmt.where(Product.name.ilike(pattern))
+        count_stmt = count_stmt.where(Product.name.ilike(pattern))
     stmt = stmt.order_by(Product.created_at.desc())
 
     total = (await db.execute(count_stmt)).scalar_one()
