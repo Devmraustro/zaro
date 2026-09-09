@@ -193,7 +193,9 @@ async def _authorize_private_access(db: AsyncSession, asset: FileAsset, user: Us
             return
         if user.role == "customer":
             linked = (await db.execute(select(Customer).where(Customer.user_id == user.id))).scalar_one_or_none()
-            by_email = (await db.execute(select(Customer).where(Customer.email == user.email.lower()))).scalar_one_or_none()
+            by_email = (
+                await db.execute(select(Customer).where(Customer.email == user.email.lower()))
+            ).scalar_one_or_none()
             customer = linked or by_email
             if customer is not None and asset.customer_id == customer.id:
                 return

@@ -185,9 +185,7 @@ QUOTE_TRANSITIONS: dict[QuoteStatus, frozenset[QuoteStatus]] = {
     QuoteStatus.SENT: frozenset(
         {QuoteStatus.VIEWED, QuoteStatus.ACCEPTED, QuoteStatus.REJECTED, QuoteStatus.CANCELLED}
     ),
-    QuoteStatus.VIEWED: frozenset(
-        {QuoteStatus.ACCEPTED, QuoteStatus.REJECTED, QuoteStatus.CANCELLED}
-    ),
+    QuoteStatus.VIEWED: frozenset({QuoteStatus.ACCEPTED, QuoteStatus.REJECTED, QuoteStatus.CANCELLED}),
     QuoteStatus.ACCEPTED: frozenset({QuoteStatus.DEPOSIT_REQUIRED}),
     QuoteStatus.DEPOSIT_REQUIRED: frozenset({QuoteStatus.CONVERTED}),
     QuoteStatus.CONVERTED: frozenset(),
@@ -207,9 +205,7 @@ class OrderStatus(StrEnum):
 
 
 ORDER_TRANSITIONS: dict[OrderStatus, frozenset[OrderStatus]] = {
-    OrderStatus.PENDING_DEPOSIT: frozenset(
-        {OrderStatus.CONFIRMED, OrderStatus.CANCELLED}
-    ),
+    OrderStatus.PENDING_DEPOSIT: frozenset({OrderStatus.CONFIRMED, OrderStatus.CANCELLED}),
     OrderStatus.CONFIRMED: frozenset(),  # future phases append production states here
     OrderStatus.CANCELLED: frozenset(),
 }
@@ -279,6 +275,7 @@ class StockMovementType(StrEnum):
     Enumeration of all valid stock movement types.
     Used in stock_movements.movement_type CHECK constraint and model validation.
     """
+
     PURCHASE = "purchase"
     RESERVE = "reserve"
     RELEASE = "release"
@@ -295,6 +292,7 @@ class ProductionOrderStatus(StrEnum):
     Used in production_orders.status CHECK constraint and model validation.
     Matches PostgreSQL productionorderstatus type.
     """
+
     PENDING = "pending"
     PLANNED = "planned"
     MATERIALS_RESERVED = "materials_reserved"
@@ -344,6 +342,7 @@ PRODUCTION_ORDER_TRANSITIONS: dict[ProductionOrderStatus, frozenset[ProductionOr
 
 class ProductionMaterialReservationStatus(StrEnum):
     """Status of a production material reservation."""
+
     PENDING = "pending"
     RESERVED = "reserved"
     CONSUMED = "consumed"
@@ -352,12 +351,16 @@ class ProductionMaterialReservationStatus(StrEnum):
 
 # Allowed forward transitions of the production material reservation lifecycle.
 # Terminal states (CONSUMED, RELEASED) map to an empty set.
-PRODUCTION_MATERIAL_RESERVATION_TRANSITIONS: dict[ProductionMaterialReservationStatus, frozenset[ProductionMaterialReservationStatus]] = {
+PRODUCTION_MATERIAL_RESERVATION_TRANSITIONS: dict[
+    ProductionMaterialReservationStatus, frozenset[ProductionMaterialReservationStatus]
+] = {
     ProductionMaterialReservationStatus.PENDING: frozenset({ProductionMaterialReservationStatus.RESERVED}),
-    ProductionMaterialReservationStatus.RESERVED: frozenset({
-        ProductionMaterialReservationStatus.CONSUMED,
-        ProductionMaterialReservationStatus.RELEASED,
-    }),
+    ProductionMaterialReservationStatus.RESERVED: frozenset(
+        {
+            ProductionMaterialReservationStatus.CONSUMED,
+            ProductionMaterialReservationStatus.RELEASED,
+        }
+    ),
     ProductionMaterialReservationStatus.CONSUMED: frozenset(),
     ProductionMaterialReservationStatus.RELEASED: frozenset(),
 }

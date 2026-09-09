@@ -35,10 +35,11 @@ admin_router = APIRouter(prefix="/admin/quotes", tags=["admin-quotes"])
 
 
 def _is_expired(quote: Quote) -> bool:
-    return (
-        quote.status in (QuoteStatus.SENT, QuoteStatus.VIEWED, QuoteStatus.ACCEPTED)
-        and quote.valid_until <= datetime.now(UTC)
-    )
+    return quote.status in (
+        QuoteStatus.SENT,
+        QuoteStatus.VIEWED,
+        QuoteStatus.ACCEPTED,
+    ) and quote.valid_until <= datetime.now(UTC)
 
 
 def _line_dicts(lines) -> list[dict[str, Any]]:

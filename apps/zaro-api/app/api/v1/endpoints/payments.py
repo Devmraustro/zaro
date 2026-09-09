@@ -65,7 +65,8 @@ def serialize_public(payment: Payment) -> dict[str, Any]:
         "ccp_account_holder": payment.ccp_account_holder_snapshot,
         "ccp_account_identifier": payment.ccp_account_identifier_snapshot,
         "rejection_reason_code": payment.rejection_reason_code,
-        "rejection_reason_note": payment.rejection_reason_note or _REVIEW_REASONS_PUBLIC.get(payment.rejection_reason_code or ""),
+        "rejection_reason_note": payment.rejection_reason_note
+        or _REVIEW_REASONS_PUBLIC.get(payment.rejection_reason_code or ""),
         "has_proof": payment.proof_asset_id is not None,
         "submitted_at": payment.submitted_at.isoformat() if payment.submitted_at else None,
         "reviewed_at": payment.reviewed_at.isoformat() if payment.reviewed_at else None,
@@ -243,9 +244,7 @@ async def list_payments_admin_endpoint(
         Query(pattern=r"^(pending|proof_uploaded|under_review|confirmed|rejected|cancelled)$"),
     ] = None,
 ) -> dict[str, Any]:
-    payments_list, total = await payments_service.list_payments_admin(
-        db, page=page, page_size=page_size, status=status
-    )
+    payments_list, total = await payments_service.list_payments_admin(db, page=page, page_size=page_size, status=status)
     return {
         "items": [serialize_admin(p) for p in payments_list],
         "total": total,

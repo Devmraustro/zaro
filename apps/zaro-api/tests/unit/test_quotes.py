@@ -15,7 +15,9 @@ from app.services.quotes_service import (
 
 
 def _line(qty="1", price=45000_00):
-    return QuoteLineInput.build(description="Custom dining table", quantity=qty, unit_label=None, unit_price_minor=price)
+    return QuoteLineInput.build(
+        description="Custom dining table", quantity=qty, unit_label=None, unit_price_minor=price
+    )
 
 
 class TestQuoteLineInput:

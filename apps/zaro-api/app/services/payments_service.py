@@ -24,9 +24,7 @@ from app.models.enums import PAYMENT_STATUS_TRANSITIONS, OrderStatus, PaymentMet
 from app.models.order import Order
 from app.models.payment import Payment, PaymentConfiguration
 
-_ACTIVE_STATUSES = frozenset(
-    {PaymentStatus.PENDING, PaymentStatus.PROOF_UPLOADED, PaymentStatus.UNDER_REVIEW}
-)
+_ACTIVE_STATUSES = frozenset({PaymentStatus.PENDING, PaymentStatus.PROOF_UPLOADED, PaymentStatus.UNDER_REVIEW})
 
 
 # --- Configuration ------------------------------------------------------------
@@ -199,7 +197,9 @@ async def submit_for_review(db: AsyncSession, payment: Payment) -> Payment:
     return payment
 
 
-async def confirm_payment(db: AsyncSession, payment_id: uuid.UUID, *, reviewer_user_id: uuid.UUID) -> tuple[Payment, Order]:
+async def confirm_payment(
+    db: AsyncSession, payment_id: uuid.UUID, *, reviewer_user_id: uuid.UUID
+) -> tuple[Payment, Order]:
     """Confirm a deposit payment and update the order -- atomically.
 
     Locking protocol (caller's transaction):

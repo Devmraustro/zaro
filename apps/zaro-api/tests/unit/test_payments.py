@@ -1,6 +1,5 @@
 """Unit tests for the payment domain: transitions, configuration, claims."""
 
-
 import pytest
 
 from app.core.exceptions import InvalidStateTransition, ValidationFailedError
@@ -48,9 +47,7 @@ class TestConfigurationValidation:
         from app.services import payments_service
 
         with pytest.raises(ValidationFailedError):
-            await payments_service.update_configuration(
-                db_session, default_deposit_percentage=0
-            )
+            await payments_service.update_configuration(db_session, default_deposit_percentage=0)
         with pytest.raises(ValidationFailedError):
             await payments_service.update_configuration(db_session, default_deposit_percentage=101)
         with pytest.raises(ValidationFailedError):

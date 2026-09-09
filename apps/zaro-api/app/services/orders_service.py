@@ -76,9 +76,7 @@ async def create_from_quote(db: AsyncSession, quote: Quote) -> Order:
             details={"current": str(QuoteStatus(quote.status).value)},
         )
 
-    existing = (
-        await db.execute(select(Order).where(Order.quote_id == quote.id))
-    ).scalar_one_or_none()
+    existing = (await db.execute(select(Order).where(Order.quote_id == quote.id))).scalar_one_or_none()
     if existing is not None:
         raise ConflictError("An order already exists for this quote")
 

@@ -241,10 +241,11 @@ def ensure_not_expired(quote: Quote) -> None:
     Expiry is evaluated lazily at every mutating operation; the row itself is
     only persisted as EXPIRED by :func:`expire_if_past_validity`.
     """
-    if (
-        quote.status in (QuoteStatus.SENT, QuoteStatus.VIEWED, QuoteStatus.ACCEPTED)
-        and quote.valid_until <= datetime.now(UTC)
-    ):
+    if quote.status in (
+        QuoteStatus.SENT,
+        QuoteStatus.VIEWED,
+        QuoteStatus.ACCEPTED,
+    ) and quote.valid_until <= datetime.now(UTC):
         raise InvalidStateTransition(
             "Quote has expired",
             details={"current": "expired", "allowed": []},
