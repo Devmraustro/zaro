@@ -7,11 +7,12 @@ paginated with allow-listed sort options; free-text search is parameterized
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
+from app.core.exceptions import NotFoundError
 from app.db.session import get_db
 from app.schemas.catalog import CategoryResponse
 from app.services import catalog_service
@@ -103,7 +104,7 @@ async def get_product_by_slug(
 ) -> JSONResponse:
     product = await catalog_service.get_product_by_slug(db, slug)
     if product is None:
-        raise HTTPException(status_code=404, detail="Product not found")
+        raise NotFoundError("Product not found")
     return JSONResponse(content=_serialize_product(product))
 
 

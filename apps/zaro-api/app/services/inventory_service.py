@@ -11,8 +11,10 @@ import json
 import uuid
 from dataclasses import dataclass
 from decimal import Decimal
+from enum import Enum
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ConflictError, ValidationFailedError
@@ -21,9 +23,15 @@ from app.models.enums import StockMovementType
 from app.models.inventory import StockLevel, StockMovement
 from app.models.material import Material
 from app.services.audit import record_event
+from app.services.references import is_unique_violation
 
 # Deterministic delta vectors for each movement type.
 # (on_hand_delta, reserved_delta)
+#
+# RESERVE never touches on_hand (stock stays physical, only earmarked), so
+# RETURN -- "give unused reserved stock back to the available pool" -- must
+# only decrement reserved. A (+1, -1) vector here would mint phantom stock
+# out of thin air on every return.
 _MOVEMENT_DELTAS: dict[StockMovementType, tuple[Decimal, Decimal]] = {
     StockMovementType.PURCHASE: (Decimal("1"), Decimal("0")),
     StockMovementType.RESERVE: (Decimal("0"), Decimal("1")),
@@ -32,7 +40,7 @@ _MOVEMENT_DELTAS: dict[StockMovementType, tuple[Decimal, Decimal]] = {
     StockMovementType.PRODUCTION_WASTE: (Decimal("-1"), Decimal("-1")),
     StockMovementType.INVENTORY_WASTE: (Decimal("-1"), Decimal("0")),
     StockMovementType.ADJUST: (Decimal("1"), Decimal("0")),  # signed by qty
-    StockMovementType.RETURN: (Decimal("1"), Decimal("-1")),
+    StockMovementType.RETURN: (Decimal("0"), Decimal("-1")),
 }
 
 
@@ -58,14 +66,37 @@ async def get_stock_level(db: AsyncSession, material_id: uuid.UUID) -> StockLeve
     return level
 
 
+def _display_str(value: object) -> str:
+    """Render a value that may be a str or a StrEnum (fresh DB reads are str)."""
+    if isinstance(value, Enum):
+        return str(value.value)
+    return str(value)
+
+
 async def get_stock_level_for_update(db: AsyncSession, material_id: uuid.UUID) -> StockLevel:
-    """Get and row-lock the stock level for a material."""
+    """Get and row-lock the stock level for a material.
+
+    Concurrent first-writes for the same material race on the insert; the
+    loser re-reads the winner's row (in a SAVEPOINT so the caller's
+    transaction is never poisoned) instead of failing with a 500.
+    """
     stmt = select(StockLevel).where(StockLevel.material_id == material_id).with_for_update()
     level = (await db.execute(stmt)).scalar_one_or_none()
     if level is None:
-        level = StockLevel(material_id=material_id, on_hand=Decimal("0"), reserved=Decimal("0"))
-        db.add(level)
-        await db.flush()
+        candidate = StockLevel(material_id=material_id, on_hand=Decimal("0"), reserved=Decimal("0"))
+        try:
+            async with db.begin_nested():
+                db.add(candidate)
+                await db.flush()
+        except IntegrityError as exc:
+            if not is_unique_violation(exc):
+                raise
+            # Lost the creation race: the winner's row is now visible.
+            level = None
+        # Re-acquire the row lock on the (possibly just created) row.
+        level = (await db.execute(stmt)).scalar_one_or_none()
+        if level is None:  # pragma: no cover - defensive; the row must exist now
+            raise RuntimeError("Stock level row missing after insert conflict handling")
     return level
 
 
@@ -143,11 +174,9 @@ async def apply_movement(
     # Compute fingerprint for idempotency check
     fingerprint = _compute_fingerprint(payload)
 
-    # Check idempotency
+    # Check idempotency (fast path for retried requests)
     existing = await _check_idempotency(db, idempotency_key, fingerprint)
     if existing is not None:
-        if existing.request_fingerprint != fingerprint:
-            raise ConflictError("Idempotency key conflict: same key with different payload")
         # Return existing result without creating a new movement
         level = await get_stock_level(db, material_id)
         return MovementResult(
@@ -190,12 +219,11 @@ async def apply_movement(
     previous_on_hand = level.on_hand
     previous_reserved = level.reserved
 
-    # Apply changes
-    level.on_hand = new_on_hand
-    level.reserved = new_reserved
-
-    # Create movement record
-    fingerprint = _compute_fingerprint(payload)
+    # Create movement record. The mutation runs in a SAVEPOINT: two requests
+    # racing with the same idempotency key both pass the fast-path check
+    # above, and the loser must observe the winner's row (idempotent replay)
+    # instead of dying with a unique violation. Everything mutated inside
+    # the savepoint (level balances, new movement) is undone on rollback.
     movement = StockMovement(
         material_id=material_id,
         movement_type=movement_type,
@@ -209,9 +237,26 @@ async def apply_movement(
         performed_by=performed_by,
         notes=notes,
     )
-    db.add(movement)
-    db.add(level)
-    await db.flush()
+    try:
+        async with db.begin_nested():
+            level.on_hand = new_on_hand
+            level.reserved = new_reserved
+            db.add(movement)
+            db.add(level)
+            await db.flush()
+    except IntegrityError as exc:
+        if not is_unique_violation(exc):
+            raise
+        raced = await _check_idempotency(db, idempotency_key, fingerprint)
+        if raced is None:
+            raise
+        await db.refresh(level)
+        return MovementResult(
+            movement=raced,
+            stock_level=level,
+            previous_on_hand=level.on_hand,
+            previous_reserved=level.reserved,
+        )
 
     # Record audit event
     audit_action_map: dict[StockMovementType, AuditAction] = {
@@ -238,7 +283,7 @@ async def apply_movement(
             user_agent=user_agent,
             metadata={
                 "material_id": str(material_id),
-                "movement_type": movement_type.value,
+                "movement_type": _display_str(movement_type),
                 "quantity": str(quantity),
                 "unit_price_minor": unit_price_minor,
                 "currency": currency,
@@ -626,7 +671,7 @@ async def get_stock_summary(db: AsyncSession) -> list[dict]:
             "material_id": str(level.material_id),
             "material_code": material.code,
             "material_name": material.name,
-            "material_unit": material.unit.value,
+            "material_unit": _display_str(material.unit),
             "on_hand": str(level.on_hand),
             "reserved": str(level.reserved),
             "available": str(level.available()),

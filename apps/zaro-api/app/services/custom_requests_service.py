@@ -70,27 +70,33 @@ async def submit_request(
     if budget_min_minor is not None and budget_max_minor is not None and budget_min_minor > budget_max_minor:
         raise InvalidStateTransition("budget_min cannot exceed budget_max")
 
-    reference = await next_custom_request_reference(db)
-    request = CustomRequest(
-        reference=reference,
-        customer_id=customer.id,
-        customer_name=full_name,
-        customer_email=email,
-        customer_phone=phone,
-        product_type=product_type,
-        description=description,
-        desired_dimensions=desired_dimensions,
-        materials=materials,
-        colors=colors,
-        finish=finish,
-        quantity=quantity,
-        budget_min_minor=budget_min_minor,
-        budget_max_minor=budget_max_minor,
-        source=source,
-    )
-    db.add(request)
-    await db.flush()
-    return request
+    from app.services.references import run_with_unique_retry
+
+    async def _insert() -> CustomRequest:
+        candidate = CustomRequest(
+            reference=await next_custom_request_reference(db),
+            customer_id=customer.id,
+            customer_name=full_name,
+            customer_email=email,
+            customer_phone=phone,
+            product_type=product_type,
+            description=description,
+            desired_dimensions=desired_dimensions,
+            materials=materials,
+            colors=colors,
+            finish=finish,
+            quantity=quantity,
+            budget_min_minor=budget_min_minor,
+            budget_max_minor=budget_max_minor,
+            source=source,
+        )
+        db.add(candidate)
+        await db.flush()
+        return candidate
+
+    # The public form is the highest-concurrency creation surface; reference
+    # collisions regenerate-and-retry instead of failing with a 500.
+    return await run_with_unique_retry(db, _insert)
 
 
 def validate_transition(current: CustomRequestStatus, target: CustomRequestStatus) -> None:

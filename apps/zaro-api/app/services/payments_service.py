@@ -130,22 +130,27 @@ async def create_deposit_claim(db: AsyncSession, order: Order, *, customer_id: u
     if not config.account_identifier:
         raise ValidationFailedError("CCP payment instructions are not configured yet")
 
-    from app.services.references import next_payment_reference
+    from app.services.references import next_payment_reference, run_with_unique_retry
 
-    payment = Payment(
-        payment_reference=await next_payment_reference(db),
-        order_id=order.id,
-        customer_id=customer_id or order.customer_id,
-        method=PaymentMethod.CCP,
-        status=PaymentStatus.PENDING,
-        amount_minor=order.deposit_required_minor,  # authoritative amount
-        currency="DZD",
-        ccp_account_holder_snapshot=config.account_holder,
-        ccp_account_identifier_snapshot=config.account_identifier,
-    )
-    db.add(payment)
-    await db.flush()
-    return payment
+    async def _insert() -> Payment:
+        candidate = Payment(
+            payment_reference=await next_payment_reference(db),
+            order_id=order.id,
+            customer_id=customer_id or order.customer_id,
+            method=PaymentMethod.CCP,
+            status=PaymentStatus.PENDING,
+            amount_minor=order.deposit_required_minor,  # authoritative amount
+            currency="DZD",
+            ccp_account_holder_snapshot=config.account_holder,
+            ccp_account_identifier_snapshot=config.account_identifier,
+        )
+        db.add(candidate)
+        await db.flush()
+        return candidate
+
+    # Reference collisions regenerate-and-retry; a genuine duplicate claim
+    # surfaces as 409 via the partial unique index backstop.
+    return await run_with_unique_retry(db, _insert, conflict_message="A deposit claim already exists for this order")
 
 
 def validate_transition(current: PaymentStatus, target: PaymentStatus) -> None:

@@ -144,8 +144,11 @@ async def get_my_quote(
     quote = await _staff_or_owner_quote(db, quote_id, user)
     lines = await quotes_service.get_lines(db, quote.id)
 
-    # First view by the OWNING customer records QUOTE_VIEWED once.
+    # First view by the OWNING customer records QUOTE_VIEWED once. The quote
+    # is re-loaded under a row lock so concurrent first views cannot both
+    # record the transition (exactly-once audit).
     if user.role == "customer" and QuoteStatus(quote.status) == QuoteStatus.SENT:
+        quote = await quotes_service.get_quote_for_update(db, quote_id)
         if await quotes_service.expire_if_past_validity(db, quote):
             pass  # expired before viewing; no VIEWED event
         elif await quotes_service.mark_viewed(db, quote):
@@ -174,7 +177,7 @@ async def _customer_decision(
     target: QuoteStatus,
 ) -> tuple[Quote, dict[str, Any]]:
     """Shared accept/reject path with ownership + expiry enforcement."""
-    quote = await quotes_service.get_quote(db, quote_id)
+    quote = await quotes_service.get_quote_for_update(db, quote_id)
     if user.role == "customer":
         customer = await _resolve_customer(db, user)
         if customer is None or quote.customer_id != customer.id:
@@ -394,7 +397,7 @@ async def send_quote(
     db: Annotated[AsyncSession, Depends(get_db)],
     _payload: QuoteAction | None = None,
 ) -> dict[str, Any]:
-    quote = await quotes_service.get_quote(db, quote_id)
+    quote = await quotes_service.get_quote_for_update(db, quote_id)
     old_status = str(QuoteStatus(quote.status))
     quote = await quotes_service.change_status(db, quote, QuoteStatus.SENT)
     request_id_ctx, ip_address, user_agent = _get_request_context(request)
@@ -422,7 +425,7 @@ async def cancel_quote(
     db: Annotated[AsyncSession, Depends(get_db)],
     _payload: QuoteAction | None = None,
 ) -> dict[str, Any]:
-    quote = await quotes_service.get_quote(db, quote_id)
+    quote = await quotes_service.get_quote_for_update(db, quote_id)
     old_status = str(QuoteStatus(quote.status))
     quote = await quotes_service.change_status(db, quote, QuoteStatus.CANCELLED)
     request_id_ctx, ip_address, user_agent = _get_request_context(request)

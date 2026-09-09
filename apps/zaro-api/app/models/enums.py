@@ -232,12 +232,15 @@ PAYMENT_STATUS_TRANSITIONS: dict[PaymentStatus, frozenset[PaymentStatus]] = {
     PaymentStatus.PENDING: frozenset(
         {PaymentStatus.PROOF_UPLOADED, PaymentStatus.UNDER_REVIEW, PaymentStatus.CANCELLED}
     ),
+    # PROOF_UPLOADED -> PROOF_UPLOADED is proof replacement: the customer may
+    # swap the file before submitting for review (each upload is audited).
     PaymentStatus.PROOF_UPLOADED: frozenset(
-        {PaymentStatus.UNDER_REVIEW, PaymentStatus.CANCELLED}
+        {PaymentStatus.PROOF_UPLOADED, PaymentStatus.UNDER_REVIEW, PaymentStatus.CANCELLED}
     ),
-    PaymentStatus.UNDER_REVIEW: frozenset(
-        {PaymentStatus.CONFIRMED, PaymentStatus.REJECTED}
-    ),
+    # UNDER_REVIEW -> CANCELLED exists ONLY for the server-side order-cancellation
+    # linkage (cancelling an order cancels its unresolved claim). No client
+    # operation targets CANCELLED directly.
+    PaymentStatus.UNDER_REVIEW: frozenset({PaymentStatus.CONFIRMED, PaymentStatus.REJECTED, PaymentStatus.CANCELLED}),
     # CONFIRMED is irreversible by design; corrections go through a separate
     # reversal workflow in a future phase.
     PaymentStatus.CONFIRMED: frozenset(),
@@ -305,17 +308,35 @@ class ProductionOrderStatus(StrEnum):
 
 # Allowed forward transitions of the production order lifecycle.
 # Terminal states (COMPLETED, CANCELLED) map to an empty set.
+#
+# - QUALITY_CHECK -> IN_PRODUCTION is the rework path: a rejected QC decision
+#   returns the order to production instead of approving it.
+# - Every non-terminal state may transition to CANCELLED (server-side
+#   cancellation only; there is no client-driven "set status" operation).
 PRODUCTION_ORDER_TRANSITIONS: dict[ProductionOrderStatus, frozenset[ProductionOrderStatus]] = {
-    ProductionOrderStatus.PENDING: frozenset({ProductionOrderStatus.PLANNED}),
-    ProductionOrderStatus.PLANNED: frozenset({ProductionOrderStatus.MATERIALS_RESERVED}),
-    ProductionOrderStatus.MATERIALS_RESERVED: frozenset({ProductionOrderStatus.IN_PRODUCTION}),
-    ProductionOrderStatus.IN_PRODUCTION: frozenset({
-        ProductionOrderStatus.QUALITY_CHECK,
-        ProductionOrderStatus.PAUSED,
-    }),
-    ProductionOrderStatus.QUALITY_CHECK: frozenset({ProductionOrderStatus.READY}),
-    ProductionOrderStatus.PAUSED: frozenset({ProductionOrderStatus.IN_PRODUCTION}),
-    ProductionOrderStatus.READY: frozenset({ProductionOrderStatus.COMPLETED}),
+    ProductionOrderStatus.PENDING: frozenset({ProductionOrderStatus.PLANNED, ProductionOrderStatus.CANCELLED}),
+    ProductionOrderStatus.PLANNED: frozenset(
+        {ProductionOrderStatus.MATERIALS_RESERVED, ProductionOrderStatus.CANCELLED}
+    ),
+    ProductionOrderStatus.MATERIALS_RESERVED: frozenset(
+        {ProductionOrderStatus.IN_PRODUCTION, ProductionOrderStatus.CANCELLED}
+    ),
+    ProductionOrderStatus.IN_PRODUCTION: frozenset(
+        {
+            ProductionOrderStatus.QUALITY_CHECK,
+            ProductionOrderStatus.PAUSED,
+            ProductionOrderStatus.CANCELLED,
+        }
+    ),
+    ProductionOrderStatus.QUALITY_CHECK: frozenset(
+        {
+            ProductionOrderStatus.READY,
+            ProductionOrderStatus.IN_PRODUCTION,
+            ProductionOrderStatus.CANCELLED,
+        }
+    ),
+    ProductionOrderStatus.PAUSED: frozenset({ProductionOrderStatus.IN_PRODUCTION, ProductionOrderStatus.CANCELLED}),
+    ProductionOrderStatus.READY: frozenset({ProductionOrderStatus.COMPLETED, ProductionOrderStatus.CANCELLED}),
     ProductionOrderStatus.COMPLETED: frozenset(),
     ProductionOrderStatus.CANCELLED: frozenset(),
 }
@@ -340,8 +361,3 @@ PRODUCTION_MATERIAL_RESERVATION_TRANSITIONS: dict[ProductionMaterialReservationS
     ProductionMaterialReservationStatus.CONSUMED: frozenset(),
     ProductionMaterialReservationStatus.RELEASED: frozenset(),
 }
-
-
-ALL_PRODUCTION_TRANSITIONS: frozenset[ProductionOrderStatus] = frozenset(
-    ProductionOrderStatus
-)

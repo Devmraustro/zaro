@@ -1,4 +1,5 @@
 from typing import Annotated
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select
@@ -21,7 +22,7 @@ async def list_audit_logs(
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=100)] = 20,
     action: str | None = None,
-    actor_id: str | None = None,
+    actor_id: UUID | None = None,
     result: str | None = None,
     resource_type: str | None = None,
 ) -> PaginationResponse:
