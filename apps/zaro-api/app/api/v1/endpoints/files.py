@@ -10,6 +10,7 @@ Security model (extends the Phase 1.4 storage foundation):
   visibility is public AND purpose is product_media.
 """
 
+from time import time
 from typing import Annotated, Any
 from uuid import UUID
 
@@ -175,7 +176,7 @@ async def get_access_url(
     expires_at = int(token.split("|")[0])
     return {
         "url_path": f"/api/v1/files/{asset.id}/content?token={token}",
-        "expires_in": max(expires_at - int(__import__("time").time()), 0),
+        "expires_in": max(expires_at - int(time()), 0),
     }
 
 

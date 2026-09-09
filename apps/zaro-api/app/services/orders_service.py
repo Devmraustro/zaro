@@ -35,6 +35,20 @@ async def get_order(db: AsyncSession, order_id: uuid.UUID) -> Order:
     return order
 
 
+async def get_order_for_update(db: AsyncSession, order_id: uuid.UUID) -> Order:
+    """Load and row-lock an order for a mutating transition (cancel).
+
+    Serializes cancellation against concurrent payment confirmation (which
+    locks the same row): the loser observes the settled state and fails
+    cleanly instead of overwriting CONFIRMED with CANCELLED or vice versa.
+    """
+    stmt = select(Order).where(Order.id == order_id).with_for_update()
+    order = (await db.execute(stmt)).scalar_one_or_none()
+    if order is None:
+        raise NotFoundError("Order not found")
+    return order
+
+
 async def get_lines(db: AsyncSession, order_id: uuid.UUID) -> list[OrderLine]:
     stmt = select(OrderLine).where(OrderLine.order_id == order_id).order_by(OrderLine.position)
     return list((await db.execute(stmt)).scalars().all())
@@ -69,45 +83,52 @@ async def create_from_quote(db: AsyncSession, quote: Quote) -> Order:
         raise ConflictError("An order already exists for this quote")
 
     from app.services.quotes_service import get_lines as get_quote_lines
-    from app.services.references import next_order_number
+    from app.services.references import next_order_number, run_with_unique_retry
 
     lines = await get_quote_lines(db, quote.id)
     if not lines:
         raise ValidationFailedError("Quote has no line items")
 
-    order = Order(
-        order_number=await next_order_number(db),
-        customer_id=quote.customer_id,
-        quote_id=quote.id,
-        custom_request_id=quote.custom_request_id,
-        status=OrderStatus.PENDING_DEPOSIT,
-        currency="DZD",
-        subtotal_minor=quote.subtotal_minor,
-        discount_minor=quote.discount_minor,
-        delivery_fee_minor=quote.delivery_fee_minor,
-        total_minor=quote.total_minor,
-        # Authoritative deposit copied from the quote snapshot; payments must
-        # match it exactly.
-        deposit_required_minor=quote.deposit_amount_minor,
-        deposit_paid_minor=0,
-        balance_due_minor=quote.total_minor,
-        notes=quote.notes,
-    )
-    db.add(order)
-    await db.flush()
-
-    for position, ql in enumerate(lines):
-        db.add(
-            OrderLine(
-                order_id=order.id,
-                position=position,
-                description=ql.description,
-                quantity=ql.quantity,
-                unit_label=ql.unit_label,
-                unit_price_minor=ql.unit_price_minor,
-                line_total_minor=ql.line_total_minor,
-            )
+    async def _insert() -> Order:
+        candidate = Order(
+            order_number=await next_order_number(db),
+            customer_id=quote.customer_id,
+            quote_id=quote.id,
+            custom_request_id=quote.custom_request_id,
+            status=OrderStatus.PENDING_DEPOSIT,
+            currency="DZD",
+            subtotal_minor=quote.subtotal_minor,
+            discount_minor=quote.discount_minor,
+            delivery_fee_minor=quote.delivery_fee_minor,
+            total_minor=quote.total_minor,
+            # Authoritative deposit copied from the quote snapshot; payments must
+            # match it exactly.
+            deposit_required_minor=quote.deposit_amount_minor,
+            deposit_paid_minor=0,
+            balance_due_minor=quote.total_minor,
+            notes=quote.notes,
         )
+        db.add(candidate)
+        await db.flush()
+
+        for position, ql in enumerate(lines):
+            db.add(
+                OrderLine(
+                    order_id=candidate.id,
+                    position=position,
+                    description=ql.description,
+                    quantity=ql.quantity,
+                    unit_label=ql.unit_label,
+                    unit_price_minor=ql.unit_price_minor,
+                    line_total_minor=ql.line_total_minor,
+                )
+            )
+        await db.flush()
+        return candidate
+
+    # Reference collisions regenerate-and-retry; a genuine double conversion
+    # surfaces as 409 via the unique quote_id backstop.
+    order = await run_with_unique_retry(db, _insert, conflict_message="An order already exists for this quote")
 
     # Quote moves forward: deposit now required from the customer.
     quote.status = QuoteStatus.DEPOSIT_REQUIRED
@@ -136,17 +157,25 @@ async def apply_confirmed_deposit(db: AsyncSession, order: Order, amount_minor: 
         order.confirmed_at = datetime.now(UTC)
 
         # The originating quote completes its lifecycle with the order.
+        # Locked: concurrent order cancellation links the same quote row.
         if order.quote_id is not None:
-            quote = await db.get(Quote, order.quote_id)
-            if quote is not None and QuoteStatus(quote.status) == QuoteStatus.DEPOSIT_REQUIRED:
-                quote.status = QuoteStatus.CONVERTED
-                db.add(quote)
+            locked = (
+                await db.execute(select(Quote).where(Quote.id == order.quote_id).with_for_update())
+            ).scalar_one_or_none()
+            if locked is not None and QuoteStatus(locked.status) == QuoteStatus.DEPOSIT_REQUIRED:
+                locked.status = QuoteStatus.CONVERTED
+                db.add(locked)
     db.add(order)
     await db.flush()
     return order
 
 
 async def cancel_order(db: AsyncSession, order: Order, *, reason: str | None = None) -> Order:
+    """Cancel an order and unlink its lifecycle.
+
+    Callers must pass a row-locked order (see :func:`get_order_for_update`)
+    so cancellation serializes against concurrent payment confirmation.
+    """
     current = OrderStatus(order.status)
     validate_transition(current, OrderStatus.CANCELLED)
     order.status = OrderStatus.CANCELLED
@@ -158,12 +187,15 @@ async def cancel_order(db: AsyncSession, order: Order, *, reason: str | None = N
 
     # Cancel the originating quote too (accepted/deposit_required are not
     # directly cancellable; this is the documented server-side linkage).
+    # Locked: concurrent payment confirmation links the same quote row.
     if order.quote_id is not None:
-        quote = await db.get(Quote, order.quote_id)
-        if quote is not None and QuoteStatus(quote.status) in (QuoteStatus.ACCEPTED, QuoteStatus.DEPOSIT_REQUIRED):
-            quote.status = QuoteStatus.CANCELLED
-            quote.cancelled_at = datetime.now(UTC)
-            db.add(quote)
+        locked = (
+            await db.execute(select(Quote).where(Quote.id == order.quote_id).with_for_update())
+        ).scalar_one_or_none()
+        if locked is not None and QuoteStatus(locked.status) in (QuoteStatus.ACCEPTED, QuoteStatus.DEPOSIT_REQUIRED):
+            locked.status = QuoteStatus.CANCELLED
+            locked.cancelled_at = datetime.now(UTC)
+            db.add(locked)
     return order
 
 

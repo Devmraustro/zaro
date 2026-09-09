@@ -5,6 +5,7 @@ uploads proof, and an authorized ZARO operator confirms or rejects after
 human review. Nothing here is automatic or bank-verified.
 """
 
+from time import time
 from typing import Annotated, Any
 from uuid import UUID
 
@@ -113,6 +114,11 @@ async def upload_payment_proof(
     """Attach (or replace) proof. Rejected payments may resubmit new proof."""
     payment = await _staff_or_owner_payment(db, payment_id, user)
 
+    # Validate the transition BEFORE touching storage so a payment that can
+    # no longer accept proof (e.g. already confirmed) does not leave an
+    # orphaned file on disk.
+    payments_service.validate_transition(PaymentStatus(payment.status), PaymentStatus.PROOF_UPLOADED)
+
     data = await file.read()
     backend = get_storage_backend(settings)
     try:
@@ -168,6 +174,8 @@ async def submit_payment_for_review(
 ) -> dict[str, Any]:
     """Customer asserts the transfer is done; proof becomes mandatory."""
     payment = await _staff_or_owner_payment(db, payment_id, user)
+    # Row-locked so concurrent submissions serialize (exactly-once audit).
+    payment = await payments_service.get_for_update(db, payment.id)
     old_status = str(PaymentStatus(payment.status))
     payment = await payments_service.submit_for_review(db, payment)
 
@@ -214,7 +222,6 @@ async def get_proof_access_url(
         raise NotFoundError("No proof uploaded for this payment")
     token = sign_url(settings, asset.storage_key, _SIGNED_URL_TTL_SECONDS)
     expires_at = int(token.split("|")[0])
-    from time import time
 
     return {
         "url_path": f"/api/v1/files/{asset.id}/content?token={token}",
@@ -302,15 +309,26 @@ async def reject_payment(
     user: Annotated[User, Depends(require_permission(Permission.PAYMENTS_REJECT))],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict[str, Any]:
-    payment = await payments_service.get_payment(db, payment_id)
+    # Row-locked: a concurrent confirmation holds the same lock, so exactly
+    # one of confirm/reject wins. Without the lock a reject could overwrite
+    # an already-CONFIRMED payment after its deposit was applied to the order.
+    try:
+        payment = await payments_service.get_for_update(db, payment_id)
+    except Exception:
+        await db.rollback()
+        raise
     old_status = str(PaymentStatus(payment.status))
-    payment = await payments_service.reject_payment(
-        db,
-        payment,
-        reason_code=payload.reason_code,
-        reason_note=payload.reason_note,
-        reviewer_user_id=user.id,
-    )
+    try:
+        payment = await payments_service.reject_payment(
+            db,
+            payment,
+            reason_code=payload.reason_code,
+            reason_note=payload.reason_note,
+            reviewer_user_id=user.id,
+        )
+    except Exception:
+        await db.rollback()
+        raise
     request_id_ctx, ip_address, user_agent = _get_request_context(request)
     await record_event(
         db,

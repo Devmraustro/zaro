@@ -26,12 +26,19 @@ class MaterialRequirementIn(BaseModel):
     material_spec: str | None = Field(default=None, max_length=500)
 
 
-class ProductionOrderPlan(BaseModel):
-    """Admin payload for planning a production order."""
+class ProductionOrderCreate(BaseModel):
+    """Admin payload for creating a production order from a confirmed order."""
 
     model_config = ConfigDict(extra="forbid")
 
     order_id: UUID
+
+
+class ProductionOrderPlan(BaseModel):
+    """Admin payload for planning a production order (BOM snapshot)."""
+
+    model_config = ConfigDict(extra="forbid")
+
     requirements: list[MaterialRequirementIn] = Field(min_length=1, max_length=100)
     planned_start_date: datetime | None = None
     planned_end_date: datetime | None = None

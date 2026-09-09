@@ -260,12 +260,15 @@ def upgrade() -> None:
     op.create_index("ix_payments_customer_id", "payments", ["customer_id"])
     op.create_index("ix_payments_status", "payments", ["status"])
     # At most ONE unresolved claim per order (pending/proof_uploaded/under_review).
+    # The sqlite_where twin keeps SQLite semantics identical to PostgreSQL
+    # (without it SQLite would enforce a full unique index on order_id).
     op.create_index(
         "uq_payments_order_active",
         "payments",
         ["order_id"],
         unique=True,
         postgresql_where=text("status IN ('pending','proof_uploaded','under_review')"),
+        sqlite_where=text("status IN ('pending','proof_uploaded','under_review')"),
     )
     # At most ONE confirmed deposit per order.
     op.create_index(
@@ -274,6 +277,7 @@ def upgrade() -> None:
         ["order_id"],
         unique=True,
         postgresql_where=text("status = 'confirmed'"),
+        sqlite_where=text("status = 'confirmed'"),
     )
 
 
