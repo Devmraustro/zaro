@@ -26,6 +26,7 @@ services:
       - zaro-pgdata:/var/lib/postgresql/data
     networks:
       - zaro-internal
+      - default
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U zaro -d zaro"]
       interval: 5s

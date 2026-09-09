@@ -112,6 +112,6 @@ def test_migration_chain_is_reversible(alembic_env, sqlite_url):
     try:
         with engine.connect() as conn:
             version = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
-        assert version == "0005"
+        assert version == "0007"
     finally:
         engine.dispose()

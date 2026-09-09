@@ -30,6 +30,7 @@ from app.models.custom_request import CustomRequest
 from app.models.order import Order
 from app.models.payment import Payment
 from app.models.product import Product
+from app.models.production import ProductionOrder
 from app.models.quote import Quote
 
 _SLUG_MAX = 200
@@ -114,6 +115,12 @@ async def next_payment_reference(db: AsyncSession) -> str:
     """Generate ZPAY-YYYY-NNNNN for the current year."""
     year = datetime.now(UTC).year
     return await _next_year_reference(db, Payment, Payment.payment_reference, f"ZPAY-{year}-")
+
+
+async def next_production_number(db: AsyncSession) -> str:
+    """Generate ZPROD-YYYY-NNNNN for the current year."""
+    year = datetime.now(UTC).year
+    return await _next_year_reference(db, ProductionOrder, ProductionOrder.production_number, f"ZPROD-{year}-")
 
 
 def _next_sequence(current_max: str | None, prefix: str, *, width: int) -> int:
