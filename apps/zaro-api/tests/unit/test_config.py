@@ -57,3 +57,48 @@ class TestSettings:
 
         with pytest.raises(ValidationError):
             Settings(_env_file=None, environment="production", secret_key="change-me-in-production")
+
+
+class TestDatabaseUrlNormalization:
+    def test_postgresql_scheme_normalized_to_asyncpg(self):
+        settings = Settings(
+            _env_file=None,
+            database_url="postgresql://user:pass@db.example.com:5432/mydb?sslmode=require",
+        )
+        assert settings.database_url == "postgresql+asyncpg://user:pass@db.example.com:5432/mydb?sslmode=require"
+
+    def test_postgres_scheme_normalized_to_asyncpg(self):
+        settings = Settings(_env_file=None, database_url="postgres://user:pass@host:5432/db")
+        assert settings.database_url == "postgresql+asyncpg://user:pass@host:5432/db"
+
+    def test_asyncpg_scheme_left_unchanged(self):
+        url = "postgresql+asyncpg://user:pass@host:5432/db"
+        settings = Settings(_env_file=None, database_url=url)
+        assert settings.database_url == url
+
+    def test_psycopg2_scheme_left_unchanged(self):
+        url = "postgresql+psycopg2://user:pass@host:5432/db"
+        settings = Settings(_env_file=None, database_url=url)
+        assert settings.database_url == url
+
+    def test_mysql_scheme_left_unchanged(self):
+        url = "mysql://user:pass@host:3306/db"
+        settings = Settings(_env_file=None, database_url=url)
+        assert settings.database_url == url
+
+    def test_unrelated_scheme_left_unchanged(self):
+        url = "sqlite:///./data.db"
+        settings = Settings(_env_file=None, database_url=url)
+        assert settings.database_url == url
+
+    def test_local_default_database_url_unchanged(self):
+        settings = Settings(_env_file=None)
+        assert settings.database_url == "postgresql+asyncpg://zaro:zaro@localhost:5432/zaro"
+
+    def test_normalization_preserves_credentials_and_query(self):
+        url = "postgres://user:secret@host:5432/db?connect_timeout=10&application_name=zaro"
+        settings = Settings(_env_file=None, database_url=url)
+        assert (
+            settings.database_url
+            == "postgresql+asyncpg://user:secret@host:5432/db?connect_timeout=10&application_name=zaro"
+        )
