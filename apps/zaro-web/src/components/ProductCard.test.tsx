@@ -1,7 +1,11 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import ProductCard from "./ProductCard";
 import type { Product } from "@/types/api";
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 function makeProduct(overrides: Partial<Product> = {}): Product {
   return {
@@ -83,6 +87,24 @@ describe("ProductCard", () => {
     const img = screen.getByRole("img");
     expect(img).toHaveAttribute("alt", "Oak table in a dining room");
     expect(img.getAttribute("src")).toContain("/api/v1/files/m1/public-content");
+  });
+
+  it("does not duplicate /api/v1 when the API base URL already contains it", () => {
+    vi.stubEnv("NEXT_PUBLIC_API_BASE_URL", "https://api.example.com/api/v1");
+    const product = makeProduct({
+      media: [
+        {
+          id: "m1",
+          url_path: "/api/v1/files/m1/public-content",
+          media_kind: "image",
+          alt_text: "Oak table in a dining room",
+          sort_order: 0,
+        },
+      ],
+    });
+    render(<ProductCard product={product} />);
+    const img = screen.getByRole("img");
+    expect(img.getAttribute("src")).toBe("https://api.example.com/api/v1/files/m1/public-content");
   });
 
   it("falls back to raw status label for unknown statuses", () => {

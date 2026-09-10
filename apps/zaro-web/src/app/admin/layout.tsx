@@ -26,12 +26,6 @@ export default function AdminLayout({
           >
             Custom Requests
           </a>
-          <a
-            href="/admin/orders"
-            className="block px-3 py-2 text-sm text-zaro-steel hover:text-zaro-ivory transition-colors"
-          >
-            Orders
-          </a>
         </nav>
       </aside>
       <main className="flex-1 p-8">{children}</main>

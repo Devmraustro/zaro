@@ -31,7 +31,7 @@ export default function ProductDetailPage() {
   useEffect(() => {
     if (!slug) return;
     let cancelled = false;
-    apiFetch<Product>(`/catalog/products/${slug}`)
+    apiFetch<Product>(`/products/${slug}`)
       .then((p) => {
         if (!cancelled) setProduct(p);
       })

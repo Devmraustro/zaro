@@ -18,7 +18,7 @@ export default function AdminProductsPage() {
 
   useEffect(() => {
     let cancelled = false;
-    adminFetch<{ items: AdminProduct[] }>("/admin/catalog/products?page_size=50")
+    adminFetch<{ items: AdminProduct[] }>("/admin/products?page_size=50")
       .then((data) => {
         if (!cancelled) setProducts(data.items);
       })

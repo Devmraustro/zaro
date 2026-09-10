@@ -24,7 +24,7 @@ export default function ShopPage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    apiFetch<Category[]>("/catalog/categories")
+    apiFetch<Category[]>("/categories")
       .then(setCategories)
       .catch(() => setCategories([]));
   }, []);
@@ -36,7 +36,7 @@ export default function ShopPage() {
     const params = new URLSearchParams({ page: String(page), sort });
     if (category) params.set("category", category);
     if (search.trim()) params.set("search", search.trim());
-    apiFetch<PaginatedProducts>(`/catalog/products?${params.toString()}`)
+    apiFetch<PaginatedProducts>(`/products?${params.toString()}`)
       .then((result) => {
         if (!cancelled) setData(result);
       })

@@ -8,6 +8,14 @@ const STOCK_LABELS: Record<string, string> = {
   out_of_stock: "Out of stock",
 };
 
+function mediaUrl(urlPath: string): string {
+  const base = (process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8001").replace(
+    /\/api\/v1\/?$/,
+    "",
+  );
+  return `${base}${urlPath}`;
+}
+
 export default function ProductCard({ product }: { product: Product }) {
   const cover = product.media.find((m) => m.media_kind === "image");
   const price =
@@ -25,7 +33,7 @@ export default function ProductCard({ product }: { product: Product }) {
         {cover ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
-            src={`${process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8001"}${cover.url_path}`}
+            src={mediaUrl(cover.url_path)}
             alt={cover.alt_text ?? product.name}
             className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
           />
