@@ -29,6 +29,8 @@ class TestRotation:
         data = resp.json()
         assert data["access_token"] and data["refresh_token"]
         assert data["refresh_token"] != secret
+        assert isinstance(data["csrf_token"], str) and len(data["csrf_token"]) > 20
+        assert data["csrf_token"] != data["refresh_token"]
 
         rows = (await db_session.execute(select(AuthSession))).scalars().all()
         by_id = {str(s.id): s for s in rows}
@@ -47,6 +49,30 @@ class TestRotation:
         assert first.status_code == 200
         second = await client.post("/api/v1/auth/refresh", json={"refresh_token": secret})
         assert second.status_code == 401
+
+    async def test_cookie_refresh_accepts_body_provided_csrf_and_returns_new_matching_token(
+        self, client: AsyncClient, user_factory
+    ):
+        """The login/refresh csrf_token mirrors the csrf cookie so a cross-origin
+        SPA (which cannot read the path-scoped API-origin cookie) can present the
+        matching X-CSRF-Token header for cookie-sourced refresh."""
+        user = await user_factory()
+        login = await client.post("/api/v1/auth/login", json={"email": user.email, "password": "test-password-123"})
+        assert login.status_code == 200
+        login_data = login.json()
+
+        assert login_data["csrf_token"] == client.cookies.get("zaro_csrf")
+
+        resp = await client.post("/api/v1/auth/refresh", headers={"X-CSRF-Token": login_data["csrf_token"]})
+        assert resp.status_code == 200, resp.text
+        data = resp.json()
+
+        assert isinstance(data["csrf_token"], str) and len(data["csrf_token"]) > 20
+        assert data["csrf_token"] == client.cookies.get("zaro_csrf")
+        assert data["csrf_token"] != login_data["csrf_token"]
+        assert data["csrf_token"] != data["refresh_token"]
+        # The HttpOnly refresh cookie is rotated alongside the body value.
+        assert data["refresh_token"] == client.cookies.get("zaro_refresh")
 
     async def test_refresh_via_cookie_requires_csrf_header(
         self, client: AsyncClient, db_session, settings, user_factory

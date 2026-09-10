@@ -24,6 +24,11 @@ class LoginResponse(BaseModel):
     refresh_token: str
     token_type: str = "bearer"
     expires_in: int
+    # Mirrors the readable zaro_csrf cookie so a cross-origin SPA can echo it in
+    # the X-CSRF-Token header (the cookie itself is path-scoped to /api/v1/auth
+    # and lives on the API origin, so it is not readable by page JavaScript).
+    # Never the HttpOnly refresh credential; validates against the cookie as-is.
+    csrf_token: str
     user: UserResponse
 
 
@@ -32,6 +37,8 @@ class TokenResponse(BaseModel):
     refresh_token: str
     token_type: str = "bearer"
     expires_in: int
+    # Same double-submit contract as LoginResponse.csrf_token.
+    csrf_token: str
 
 
 class RefreshRequest(BaseModel):

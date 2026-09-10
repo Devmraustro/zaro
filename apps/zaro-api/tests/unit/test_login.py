@@ -41,6 +41,23 @@ class TestLoginSuccess:
         assert "httponly" not in csrf_cookie.lower()
         assert "path=/api/v1/auth" in refresh_cookie.lower()
 
+    async def test_login_response_returns_csrf_token_matching_cookie(
+        self, client: AsyncClient, user_factory
+    ):
+        user = await user_factory()
+        resp = await client.post("/api/v1/auth/login", json={"email": user.email, "password": "test-password-123"})
+        assert resp.status_code == 200
+        data = resp.json()
+
+        csrf_cookie = next(c for c in resp.headers.get_list("set-cookie") if c.startswith("zaro_csrf="))
+        cookie_value = csrf_cookie.split("=", 1)[1].split(";", 1)[0]
+
+        assert isinstance(data["csrf_token"], str) and len(data["csrf_token"]) > 20
+        assert data["csrf_token"] == cookie_value
+        assert client.cookies.get("zaro_csrf") == cookie_value
+        # The CSRF field must never carry the refresh credential.
+        assert data["csrf_token"] != data["refresh_token"]
+
     async def test_updates_last_login_at(self, client: AsyncClient, db_session, user_factory, login_user):
 
         user = await user_factory()

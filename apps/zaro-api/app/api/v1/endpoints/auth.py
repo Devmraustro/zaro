@@ -68,21 +68,30 @@ def _cookie_secure(settings: Settings) -> bool:
     return settings.cookie_secure
 
 
-def _set_auth_cookies(response: Response, settings: Settings, refresh_secret: str) -> None:
+def _set_auth_cookies(response: Response, settings: Settings, refresh_secret: str) -> str:
+    """Set the HttpOnly refresh cookie plus readable CSRF cookie.
+
+    Returns the CSRF token written to the cookie so it can be echoed in the
+    response body — the cookie is path-scoped to /api/v1/auth on the API
+    origin, so a cross-origin SPA cannot read it from document.cookie and
+    needs the value delivered as JSON to build the X-CSRF-Token header.
+    """
     common: dict[str, Any] = {
         "secure": _cookie_secure(settings),
         "samesite": settings.cookie_samesite,
         "path": _COOKIE_PATH,
     }
+    csrf_token = secrets.token_urlsafe(32)
     max_age = settings.refresh_token_expire_days * 86400
     response.set_cookie(settings.refresh_cookie_name, refresh_secret, httponly=True, max_age=max_age, **common)
     response.set_cookie(
         settings.csrf_cookie_name,
-        secrets.token_urlsafe(32),
+        csrf_token,
         httponly=False,
         max_age=max_age,
         **common,
     )
+    return csrf_token
 
 
 def _clear_auth_cookies(response: Response, settings: Settings) -> None:
@@ -167,12 +176,13 @@ async def login(
     )
     await db.commit()
 
-    _set_auth_cookies(response, settings, refresh_secret)
+    csrf_token = _set_auth_cookies(response, settings, refresh_secret)
     return LoginResponse(
         access_token=access_token,
         refresh_token=refresh_secret,
         token_type="bearer",
         expires_in=expires_in,
+        csrf_token=csrf_token,
         user=UserResponse(
             id=str(user.id),
             email=user.email,
@@ -239,8 +249,10 @@ async def refresh(
     )
     await db.commit()
 
-    _set_auth_cookies(response, settings, new_secret)
-    return TokenResponse(access_token=access_token, refresh_token=new_secret, expires_in=expires_in)
+    csrf_token = _set_auth_cookies(response, settings, new_secret)
+    return TokenResponse(
+        access_token=access_token, refresh_token=new_secret, expires_in=expires_in, csrf_token=csrf_token
+    )
 
 
 @router.post("/logout", status_code=204)
