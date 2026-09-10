@@ -1,6 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import ProductCard from "./ProductCard";
+import ProductCard, { mediaUrl } from "./ProductCard";
 import type { Product } from "@/types/api";
 
 afterEach(() => {
@@ -110,5 +110,14 @@ describe("ProductCard", () => {
   it("falls back to raw status label for unknown statuses", () => {
     render(<ProductCard product={makeProduct({ stock_status: "in_stock" })} />);
     expect(screen.getByText("In stock")).toBeInTheDocument();
+  });
+});
+
+describe("mediaUrl", () => {
+  it("contains exactly one /api/v1 when the API base URL already ends with /api/v1", () => {
+    vi.stubEnv("NEXT_PUBLIC_API_BASE_URL", "https://api.example.com/api/v1");
+    const result = mediaUrl("/api/v1/files/m1/public-content");
+    expect(result).toBe("https://api.example.com/api/v1/files/m1/public-content");
+    expect(result.split("/api/v1").length - 1).toBe(1);
   });
 });

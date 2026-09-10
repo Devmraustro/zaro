@@ -5,9 +5,8 @@ import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
 import { formatPrice } from "@/lib/format";
+import { mediaUrl } from "@/components/ProductCard";
 import type { Product } from "@/types/api";
-
-const API_ORIGIN = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8001";
 
 const STOCK_LABELS: Record<string, string> = {
   in_stock: "In stock",
@@ -84,7 +83,7 @@ export default function ProductDetailPage() {
               // eslint-disable-next-line @next/next/no-img-element
               <img
                 key={img.id}
-                src={`${API_ORIGIN}${img.url_path}`}
+                src={mediaUrl(img.url_path)}
                 alt={img.alt_text ?? product.name}
                 className="w-full border border-zaro-ivory-dark object-cover"
               />
