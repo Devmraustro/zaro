@@ -20,10 +20,12 @@ from urllib.parse import urlparse
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.db.base import Base
+from app.models.audit_enums import AuditAction
+from app.models.audit_log import AuditLog
 from app.models.enums import OrderStatus
 from app.models.inventory import StockLevel, StockMovement
 from app.models.material import Material
@@ -193,12 +195,27 @@ async def test_concurrent_idempotent_purchase_single_application(pg_session_fact
 
     results = await asyncio.gather(*[_purchase() for _ in range(5)])
 
+    # Idempotent replay semantics: concurrent duplicates are successful no-ops
+    # (apply_movement returns the existing movement for the replayed key), so a
+    # replay may legitimately report success. The safety invariant is that the
+    # mutation is applied EXACTLY once -- a single movement, a single stock
+    # mutation, and a single audit event.
+    assert sorted(results) == ["ok"] * 5, results
+
     async with maker() as s:
         level = (await s.execute(select(StockLevel).where(StockLevel.material_id == material_id))).scalar_one()
         assert level.on_hand == Decimal("10"), f"stock applied more than once: {level.on_hand}"
-        moves = (await s.execute(select(StockMovement).where(StockMovement.material_id == material_id))).scalars().all()
-        assert len(moves) == 1
-        assert results.count("ok") == 1
+        moves = (
+            (await s.execute(select(StockMovement).where(StockMovement.material_id == material_id))).scalars().all()
+        )
+        assert len(moves) == 1, f"more than one movement recorded for a single idempotent purchase: {len(moves)}"
+        assert moves[0].idempotency_key == key
+        audit = (
+            await s.execute(
+                select(func.count()).select_from(AuditLog).where(AuditLog.action == AuditAction.MATERIAL_PURCHASED.value)
+            )
+        ).scalar_one()
+        assert audit == 1, f"expected exactly one MATERIAL_PURCHASED audit event, got {audit}"
 
 
 async def test_concurrent_consume_respects_reserved_bound(pg_session_factory):

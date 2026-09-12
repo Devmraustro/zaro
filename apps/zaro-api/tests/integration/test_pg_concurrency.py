@@ -345,7 +345,7 @@ async def test_concurrent_duplicate_claims_single_active(pg_session_factory):
     assert sorted(results) == ["ConflictError", "ok"], results
 
 
-async def _order_with_under_review_claim(sm, email: str) -> tuple[uuid.UUID, uuid.UUID]:
+async def _order_with_under_review_claim(sm, email: str) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID]:
     """Seed an order at PENDING_DEPOSIT with a deposit claim UNDER_REVIEW."""
     async with sm() as db:
         customer = Customer(full_name="PG Lock", email=email)
@@ -391,8 +391,16 @@ async def _order_with_under_review_claim(sm, email: str) -> tuple[uuid.UUID, uui
         await db.flush()
         await payments_service.attach_proof(db, payment, asset_id=asset.id)
         await payments_service.submit_for_review(db, payment)
+        reviewer = User(
+            email=f"reviewer-{email}",
+            hashed_password=hash_password("test-password-123"),
+            full_name="Payment Reviewer",
+            role=Role.ADMIN,
+            is_active=True,
+        )
+        db.add(reviewer)
         await db.commit()
-        return order.id, payment.id
+        return order.id, payment.id, reviewer.id
 
 
 @pytest.mark.anyio
@@ -405,12 +413,12 @@ async def test_concurrent_confirm_and_cancel_no_deadlock(pg_session_factory):
     order (Payment -> Order -> Quote) and serialize cleanly.
     """
     sm = pg_session_factory
-    order_id, payment_id = await _order_with_under_review_claim(sm, "bl3@example.com")
+    order_id, payment_id, reviewer_id = await _order_with_under_review_claim(sm, "bl3@example.com")
 
     async def confirm():
         async with sm() as db:
             try:
-                await payments_service.confirm_payment(db, payment_id, reviewer_user_id=uuid.uuid4())
+                await payments_service.confirm_payment(db, payment_id, reviewer_user_id=reviewer_id)
                 await db.commit()
                 return "ok"
             except Exception as exc:  # surfaced via result string for assertion
@@ -430,8 +438,9 @@ async def test_concurrent_confirm_and_cancel_no_deadlock(pg_session_factory):
     results = await asyncio.gather(confirm(), cancel())
     lowered = [str(r).lower() for r in results]
     assert not any("deadlock" in r or "40p01" in r for r in lowered), results
-    assert sorted(results)[0] == "ok", results
-    assert sorted(results)[1].startswith(("InvalidStateTransition", "ConflictError")), results
+    assert results.count("ok") == 1, results
+    losers = [r for r in results if not str(r).startswith("ok")]
+    assert len(losers) == 1 and losers[0].startswith(("InvalidStateTransition", "ConflictError")), results
 
     async with sm() as db:
         order = await db.get(Order, order_id)
