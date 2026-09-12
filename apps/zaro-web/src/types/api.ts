@@ -1,3 +1,7 @@
+import type { ProductType } from "./product-type";
+
+export type { ProductType } from "./product-type";
+
 export interface HealthResponse {
   status: string;
   version: string;
@@ -40,7 +44,7 @@ export interface ProductMediaPublic {
   sort_order: number;
 }
 
-export interface Product {
+export interface Product<V = ProductVariantPublic> {
   id: string;
   name: string;
   slug: string;
@@ -56,7 +60,7 @@ export interface Product {
   delivery_available: boolean;
   delivery_info: string | null;
   is_featured: boolean;
-  variants: ProductVariantPublic[];
+  variants: V[];
   media: ProductMediaPublic[];
 }
 
@@ -68,16 +72,6 @@ export interface PaginatedProducts {
 }
 
 // --- Custom requests ----------------------------------------------------
-
-export type ProductType =
-  | "table"
-  | "chair"
-  | "sofa"
-  | "shelf"
-  | "bed"
-  | "desk"
-  | "metalwork"
-  | "other";
 
 export interface CustomRequestSubmit {
   full_name: string;
@@ -144,8 +138,20 @@ export interface TokenResponse {
   csrf_token: string;
 }
 
-export interface AdminProduct extends Product {
-  status: string;
+export type ProductStatus = "draft" | "active" | "archived";
+
+export interface ProductVariantAdmin {
+  id: string;
+  sku: string;
+  label: string;
+  attributes: Record<string, string> | null;
+  price_override_minor: number | null;
+  is_active: boolean;
+  sort_order: number;
+}
+
+export interface AdminProduct extends Product<ProductVariantAdmin> {
+  status: ProductStatus;
   created_at: string;
   updated_at: string;
 }

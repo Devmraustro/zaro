@@ -4,11 +4,18 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { adminFetch } from "@/lib/admin-auth";
 import { formatPrice } from "@/lib/format";
+import { EmptyState, ErrorState, LoadingState } from "@/components/ui/StateViews";
 import type { AdminProduct } from "@/types/api";
+
+const STATUS_PILL: Record<string, string> = {
+  draft: "text-amber-800 bg-amber-50 border-amber-200",
+  active: "text-[#3e5f3f] bg-[#eef4ea] border-[#cfdfc9]",
+  archived: "text-zaro-stone bg-zaro-ivory border-zaro-ivory-dark",
+};
 
 const STATUS_LABELS: Record<string, string> = {
   draft: "Draft",
-  published: "Published",
+  active: "Published",
   archived: "Archived",
 };
 
@@ -33,55 +40,59 @@ export default function AdminProductsPage() {
   return (
     <div>
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-zaro-black">Products</h1>
-        <Link href="/admin" className="text-xs uppercase tracking-wider text-zaro-bronze hover:underline">
+        <div>
+          <h1 className="font-serif text-2xl font-medium text-zaro-black">Products</h1>
+          <p className="mt-1 text-sm text-zaro-steel">Catalog overview — read-only.</p>
+        </div>
+        <Link
+          href="/admin"
+          className="text-[0.65rem] uppercase tracking-[0.2em] text-zaro-bronze-dark transition-colors hover:text-zaro-graphite"
+        >
           Sign out / switch account
         </Link>
       </div>
 
-      {error && <div className="mt-6 text-sm text-red-700">{error}</div>}
-      {!products && !error && <div className="mt-6 text-sm text-zaro-steel">Loading…</div>}
+      {error && !products && <div className="mt-6"><ErrorState message={error} /></div>}
+      {!products && !error && <div className="mt-6"><LoadingState label="Loading products" /></div>}
 
-      {products && (
-        <table className="mt-6 w-full border-collapse bg-white text-sm">
-          <thead>
-            <tr className="border-b border-zaro-ivory-dark text-left text-xs uppercase tracking-wider text-zaro-steel">
-              <th className="px-4 py-3">Code</th>
-              <th className="px-4 py-3">Name</th>
-              <th className="px-4 py-3">Price</th>
-              <th className="px-4 py-3">Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {products.length === 0 && (
-              <tr>
-                <td colSpan={4} className="px-4 py-6 text-center text-zaro-steel">
-                  No products yet.
-                </td>
+      {products && products.length === 0 && (
+        <div className="mt-6">
+          <EmptyState
+            title="No products yet"
+            description="Once pieces are added, they appear here with price and publishing status."
+          />
+        </div>
+      )}
+
+      {products && products.length > 0 && (
+        <div className="mt-8 overflow-x-auto border border-zaro-graphite/10 bg-zaro-paper shadow-lift">
+          <table className="w-full min-w-[32rem] text-sm">
+            <thead>
+              <tr className="border-b border-zaro-graphite/10 text-start text-[0.625rem] uppercase tracking-[0.18em] text-zaro-stone">
+                <th scope="col" className="px-5 py-3.5 text-start font-medium">Code</th>
+                <th scope="col" className="px-5 py-3.5 text-start font-medium">Name</th>
+                <th scope="col" className="px-5 py-3.5 text-start font-medium">Price</th>
+                <th scope="col" className="px-5 py-3.5 text-start font-medium">Status</th>
               </tr>
-            )}
-            {products.map((p) => (
-              <tr key={p.id} className="border-b border-zaro-ivory-dark/60">
-                <td className="px-4 py-3 font-mono text-xs">{p.product_code}</td>
-                <td className="px-4 py-3">{p.name}</td>
-                <td className="px-4 py-3">{formatPrice(p.selling_price_minor, p.currency)}</td>
-                <td className="px-4 py-3">
-                  <span
-                    className={
-                      p.status === "published"
-                        ? "text-green-700"
-                        : p.status === "archived"
-                          ? "text-zaro-steel"
-                          : "text-amber-700"
-                    }
-                  >
-                    {STATUS_LABELS[p.status] ?? p.status}
-                  </span>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {products.map((p) => (
+                <tr key={p.id} className="border-b border-zaro-graphite/5 last:border-b-0">
+                  <td className="px-5 py-3.5 font-mono text-xs text-zaro-stone">{p.product_code}</td>
+                  <td className="px-5 py-3.5 font-medium text-zaro-graphite">{p.name}</td>
+                  <td className="px-5 py-3.5">{formatPrice(p.selling_price_minor, p.currency)}</td>
+                  <td className="px-5 py-3.5">
+                    <span
+                      className={`inline-block rounded-full border px-2.5 py-0.5 text-[0.625rem] uppercase tracking-[0.14em] ${STATUS_PILL[p.status] ?? STATUS_PILL.draft}`}
+                    >
+                      {STATUS_LABELS[p.status] ?? p.status}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );

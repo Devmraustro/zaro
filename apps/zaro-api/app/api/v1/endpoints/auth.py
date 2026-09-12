@@ -8,6 +8,10 @@ Security behaviour summary:
 - Browser clients receive the refresh credential in an HttpOnly cookie scoped to
   /api/v1/auth plus a readable CSRF token cookie; cookie-sourced refreshes must
   present the matching X-CSRF-Token header (double-submit pattern).
+- GET /auth/session is a read-only bootstrapping probe for cold page loads: it
+  confirms the refresh cookie is live and returns a fresh CSRF value so the SPA
+  can run the normal (rotating, reuse-detecting) refresh once. It mints no
+  access token and never rotates the refresh credential.
 - Every authentication event is written to the immutable audit log.
 """
 
@@ -34,6 +38,7 @@ from app.models.auth_session import REVOKE_REASON_LOGOUT
 from app.models.enums import Role
 from app.models.user import User
 from app.schemas.auth import (
+    BootstrapResponse,
     ChangePasswordRequest,
     ForgotPasswordRequest,
     LoginRequest,
@@ -253,6 +258,41 @@ async def refresh(
     return TokenResponse(
         access_token=access_token, refresh_token=new_secret, expires_in=expires_in, csrf_token=csrf_token
     )
+
+
+@router.get("/session", response_model=BootstrapResponse)
+async def session_bootstrap(
+    request: Request,
+    response: Response,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> BootstrapResponse:
+    """Cold-page-load session probe (secure refresh-on-load).
+
+    Read-only check of the HttpOnly refresh cookie. When live, issues the CSRF
+    double-submit value (matching the readable ``zaro_csrf`` cookie on the API
+    origin) so the cross-origin SPA can immediately perform the normal
+    cookie-sourced refresh. No access token is minted and the refresh credential
+    is NOT rotated, so a reload cannot trip the reuse-detection family
+    revocation. GET is safe here because the probe is a pure read with no
+    auth-related state change; the double-submit CSRF gate remains on /refresh.
+    """
+    secret = request.cookies.get(settings.refresh_cookie_name)
+    if not secret or not await auth_service.is_refresh_session_live(db, refresh_secret=secret):
+        return BootstrapResponse(session_active=False)
+
+    csrf_token = secrets.token_urlsafe(32)
+    max_age = settings.refresh_token_expire_days * 86400
+    common: dict[str, Any] = {
+        "secure": _cookie_secure(settings),
+        "samesite": settings.cookie_samesite,
+        "path": _COOKIE_PATH,
+    }
+    # Same cookie flags as _set_auth_cookies (readable CSRF half of the
+    # double-submit pair); the HttpOnly refresh cookie is left untouched.
+    response.set_cookie(settings.csrf_cookie_name, csrf_token, httponly=False, max_age=max_age, **common)
+    response.headers["Cache-Control"] = "no-store, private"
+    return BootstrapResponse(session_active=True, csrf_token=csrf_token)
 
 
 @router.post("/logout", status_code=204)

@@ -108,3 +108,18 @@ class SessionInfo(BaseModel):
 
 class SessionListResponse(BaseModel):
     sessions: list[SessionInfo]
+
+
+class BootstrapResponse(BaseModel):
+    """Cold-page-load session bootstrap (GET /auth/session).
+
+    Read-only probe of the HttpOnly refresh cookie. When it is live, returns a
+    fresh CSRF double-submit value (and re-sets the readable ``zaro_csrf``
+    cookie on the API origin) so a cross-origin SPA can then perform the normal
+    cookie-sourced refresh. Deliberately issues no access token and performs no
+    refresh rotation, so a reload cannot trip the reuse-detection family
+    revocation or mint tokens silently.
+    """
+
+    session_active: bool
+    csrf_token: str | None = None

@@ -1,28 +1,220 @@
 @import "tailwindcss";
 
+/* =========================================================
+   ZARO — design tokens
+   Warm architectural palette, editorial type, tactile feel.
+   ========================================================= */
+
 @theme {
+  /* Palette */
   --color-zaro-black: #0b0b0b;
-  --color-zaro-graphite: #1c1d1b;
-  --color-zaro-bronze: #a87952;
-  --color-zaro-ivory: #f2eee6;
-  --color-zaro-steel: #8b8d89;
-
   --color-zaro-black-light: #1a1a1a;
-  --color-zaro-ivory-dark: #e8e4dc;
+  --color-zaro-ink: #131311;
+  --color-zaro-graphite: #1c1d1b;
+  --color-zaro-graphite-soft: #2a2a26;
+  --color-zaro-charcoal: #38362f;
+  --color-zaro-stone: #6b6557;
+  --color-zaro-steel: #646660;
+  --color-zaro-sand: #d8d1c4;
+  --color-zaro-ivory: #f2eee6;
+  --color-zaro-ivory-dark: #e8e2d6;
+  --color-zaro-paper: #faf7f1;
+  --color-zaro-bronze: #a87952;
+  --color-zaro-bronze-light: #c49a71;
+  --color-zaro-bronze-dark: #84583a;
 
-  --font-sans: "Inter", system-ui, -apple-system, sans-serif;
-  --font-serif: "Playfair Display", Georgia, serif;
-  --font-mono: "JetBrains Mono", "Fira Code", monospace;
+  /* Shadow system */
+  --shadow-lift: 0 1px 2px rgb(11 11 11 / 0.06), 0 8px 24px -12px rgb(11 11 11 / 0.18);
+  --shadow-panel: 0 1px 0 rgb(255 255 255 / 0.6) inset, 0 24px 60px -32px rgb(11 11 11 / 0.35);
+
+  /* Motion */
+  --ease-out-quart: cubic-bezier(0.22, 1, 0.36, 1);
+
+  /* Texture */
+  --grain: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxODAiIGhlaWdodD0iMTgwIj48ZmlsdGVyIGlkPSJuIj48ZmVUdXJidWxlbmNlIHR5cGU9ImZyYWN0YWxOb2lzZSIgYmFzZUZyZXF1ZW5jeT0iMC44NSIgbnVtT2N0YXZlcz0iMiIgc3RpdGNoVGlsZXM9InN0aXRjaCIvPjxmZUNvbG9yTWF0cml4IHR5cGU9InNhdHVyYXRlIiB2YWx1ZXM9IjAiLz48L2ZpbHRlcj48cmVjdCB3aWR0aD0iMTgwIiBoZWlnaHQ9IjE4MCIgZmlsdGVyPSJ1cmwoI24pIiBvcGFjaXR5PSIwLjU1Ii8+PC9zdmc+");
 }
+
+@theme inline {
+  /* Fonts are provided by next/font at runtime. */
+  --font-sans: var(--font-inter), "Inter", system-ui, -apple-system, sans-serif;
+  --font-serif: var(--font-fraunces), "Fraunces", Georgia, serif;
+  --font-mono: var(--font-jetbrains-mono), "JetBrains Mono", "Fira Code", monospace;
+  --font-arabic: var(--font-cairo), "Cairo", "Segoe UI", system-ui, sans-serif;
+}
+
+/* =========================================================
+   Base
+   ========================================================= */
 
 html {
   font-family: var(--font-sans);
   color: var(--color-zaro-graphite);
   background-color: var(--color-zaro-ivory);
+  scroll-behavior: smooth;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 body {
   min-height: 100vh;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  overflow-x: clip;
+}
+
+/* Arabic: reset tracking that breaks the script, use Arabic face first. */
+:where(:lang(ar), [dir="rtl"]) {
+  letter-spacing: 0 !important;
+}
+
+:where(:lang(ar), [dir="rtl"]) body {
+  font-family: var(--font-arabic), var(--font-sans);
+}
+
+:lang(ar),
+[dir="rtl"] {
+  font-feature-settings: normal;
+}
+
+::selection {
+  background: var(--color-zaro-bronze);
+  color: var(--color-zaro-paper);
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-zaro-bronze);
+  outline-offset: 3px;
+  border-radius: 1px;
+}
+
+/* Scroll — refine the default, keep it quiet. */
+html {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-zaro-sand) transparent;
+}
+
+/* =========================================================
+   Utilities
+   ========================================================= */
+
+@utility grain {
+  position: relative;
+
+  &::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background-image: var(--grain);
+    background-size: 180px 180px;
+    opacity: 0.05;
+    mix-blend-mode: overlay;
+  }
+}
+
+@utility eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.75rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  font-size: 0.6875rem;
+  font-weight: 500;
+
+  &::before {
+    content: "";
+    width: 1.75rem;
+    height: 1px;
+    background-color: var(--color-zaro-bronze);
+  }
+}
+
+/* Scroll cue (hero) */
+@keyframes scroll-line {
+  0% {
+    transform: scaleY(0);
+    transform-origin: bottom;
+  }
+
+  50% {
+    transform: scaleY(1);
+    transform-origin: bottom;
+  }
+
+  100% {
+    transform: scaleY(0);
+    transform-origin: top;
+  }
+}
+
+@utility hairline {
+  border-color: color-mix(in srgb, var(--color-zaro-graphite) 12%, transparent);
+}
+
+/* Reveal-in motion primitives (JS adds .is-visible). */
+@utility reveal {
+  opacity: 0;
+  transform: translateY(18px);
+  transition:
+    opacity 700ms var(--ease-out-quart),
+    transform 700ms var(--ease-out-quart);
+  will-change: opacity, transform;
+
+  &.is-visible {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@utility reveal-delay-1 {
+  transition-delay: 90ms;
+}
+
+@utility reveal-delay-2 {
+  transition-delay: 180ms;
+}
+
+@utility reveal-delay-3 {
+  transition-delay: 270ms;
+}
+
+/* =========================================================
+   Motion safety
+   ========================================================= */
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .reveal {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+[dir="rtl"] .rtl-mirror {
+  transform: scaleX(-1);
+}
+
+/* Brand imagery field — the consistent "photoshoot" backdrop. */
+@utility artfield {
+  position: relative;
+  overflow: hidden;
+  background:
+    radial-gradient(120% 90% at 20% 12%, var(--color-zaro-paper) 0%, var(--color-zaro-ivory) 42%, var(--color-zaro-ivory-dark) 100%);
+}
+
+.artfield-dark {
+  background:
+    radial-gradient(120% 90% at 22% 10%, #2b2b26 0%, #1f201d 45%, #151611 100%);
 }

@@ -66,6 +66,12 @@ services:
       context: .
       dockerfile: docker/zaro-api.Dockerfile
     environment:
+      # Local stack defaults to development posture. To run this same compose
+      # file as a real deployment, export: ZARO_ENVIRONMENT=production,
+      # ZARO_COOKIE_SAMESITE=none (cross-site web/API) or strict (single
+      # domain), ZARO_CORS_ORIGINS=["https://<web-origin>"] plus strong
+      # ZARO_SECRET_KEY / ZARO_ENCRYPTION_KEY. The API refuses to boot in
+      # production with lax cookies, wildcard CORS, or dev secrets.
       ZARO_ENVIRONMENT: ${ZARO_ENVIRONMENT:-development}
       ZARO_DEBUG: ${ZARO_DEBUG:-true}
       ZARO_DATABASE_URL: postgresql+asyncpg://zaro:${ZARO_POSTGRES_PASSWORD:-zaro_dev_password}@zaro-postgres:5432/zaro
@@ -73,6 +79,7 @@ services:
       ZARO_SECRET_KEY: ${ZARO_SECRET_KEY:-dev-zaro-secret-key-change-in-production}
       ZARO_ENCRYPTION_KEY: ${ZARO_ENCRYPTION_KEY:-}
       ZARO_CORS_ORIGINS: ${ZARO_CORS_ORIGINS:-["http://localhost:3001"]}
+      ZARO_COOKIE_SAMESITE: ${ZARO_COOKIE_SAMESITE:-lax}
     depends_on:
       zaro-postgres:
         condition: service_healthy

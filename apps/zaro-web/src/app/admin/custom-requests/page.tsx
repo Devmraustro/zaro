@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { adminFetch } from "@/lib/admin-auth";
 import { formatBudgetRange } from "@/lib/format";
+import { EmptyState, ErrorState, LoadingState } from "@/components/ui/StateViews";
+import { ArrowRight } from "@/components/ui/icons";
 import type { AdminCustomRequest } from "@/types/api";
 
 const STATUS_LABELS: Record<string, string> = {
@@ -63,60 +65,84 @@ export default function AdminCustomRequestsPage() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold text-zaro-black">Custom Requests</h1>
+      <div>
+        <h1 className="font-serif text-2xl font-medium text-zaro-black">Custom Requests</h1>
+        <p className="mt-1 text-sm text-zaro-steel">Inbound briefs from the bespoke form.</p>
+      </div>
 
-      {error && <div className="mt-6 text-sm text-red-700">{error}</div>}
       {actionError && (
-        <div role="alert" className="mt-6 text-sm text-red-700">
+        <div role="alert" className="mt-6 border border-red-300/60 bg-red-50/50 px-4 py-3 text-sm text-red-700">
           {actionError}
         </div>
       )}
-      {!requests && !error && <div className="mt-6 text-sm text-zaro-steel">Loading…</div>}
+      {error && !requests && <div className="mt-6"><ErrorState message={error} /></div>}
+      {!requests && !error && <div className="mt-6"><LoadingState label="Loading requests" /></div>}
 
       {requests && requests.length === 0 && (
-        <div className="mt-6 text-sm text-zaro-steel">No custom requests yet.</div>
+        <div className="mt-6">
+          <EmptyState
+            title="No requests yet"
+            description="Requests submitted through the custom-order form will appear here."
+          />
+        </div>
       )}
 
       {requests && requests.length > 0 && (
-        <div className="mt-6 space-y-3">
+        <div className="mt-8 space-y-4">
           {requests.map((r) => (
-            <div key={r.id} className="border border-zaro-ivory-dark bg-white p-4" data-testid="custom-request-row">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <span className="font-mono text-xs font-semibold text-zaro-bronze">{r.reference}</span>
-                  <span className="ml-3 text-sm font-medium text-zaro-black capitalize">
-                    {r.product_type}
-                  </span>
-                  <span className="ml-3 rounded-full bg-zaro-ivory px-2 py-0.5 text-xs uppercase tracking-wider text-zaro-steel">
+            <article
+              key={r.id}
+              className="border border-zaro-graphite/10 bg-zaro-paper p-5 shadow-lift"
+              data-testid="custom-request-row"
+            >
+              <header className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex flex-wrap items-center gap-3">
+                  <span className="font-mono text-xs font-semibold text-zaro-bronze-dark">{r.reference}</span>
+                  <span className="font-medium text-zaro-graphite capitalize">{r.product_type}</span>
+                  <span className="rounded-full bg-zaro-ivory px-2.5 py-0.5 text-[0.625rem] uppercase tracking-[0.14em] text-zaro-stone">
                     {STATUS_LABELS[r.status] ?? r.status}
                   </span>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                   {(NEXT_STATUSES[r.status] ?? []).map((next) => (
                     <button
                       key={next}
                       type="button"
                       disabled={busyId === r.id}
                       onClick={() => void transition(r.id, next)}
-                      className="border border-zaro-ivory-dark px-3 py-1 text-xs uppercase tracking-wider hover:border-zaro-bronze hover:text-zaro-bronze disabled:opacity-40"
+                      className="inline-flex items-center gap-1 border border-zaro-graphite/15 px-3 py-1.5 text-[0.62rem] uppercase tracking-[0.14em] text-zaro-graphite/80 transition-colors hover:border-zaro-bronze hover:text-zaro-bronze disabled:opacity-40"
                     >
-                      → {STATUS_LABELS[next] ?? next}
+                      {STATUS_LABELS[next] ?? next}
+                      <ArrowRight className="size-3" />
                     </button>
                   ))}
                 </div>
-              </div>
-              <p className="mt-2 line-clamp-2 text-sm text-zaro-graphite">{r.description}</p>
-              <div className="mt-2 flex flex-wrap gap-x-6 gap-y-1 text-xs text-zaro-steel">
-                <span>{r.customer_name}</span>
-                {r.customer_email && <span>{r.customer_email}</span>}
-                {r.customer_phone && <span>{r.customer_phone}</span>}
-                <span>Qty {r.quantity}</span>
+              </header>
+              <p className="mt-3 whitespace-pre-line text-sm leading-relaxed text-zaro-graphite line-clamp-3">
+                {r.description}
+              </p>
+              <dl className="mt-4 flex flex-wrap gap-x-7 gap-y-1.5 border-t border-zaro-graphite/8 pt-4 text-xs text-zaro-stone">
+                <div className="flex gap-1.5">
+                  <dt className="text-zaro-stone/70">From</dt>
+                  <dd className="font-medium text-zaro-graphite/80">{r.customer_name}</dd>
+                </div>
+                {r.customer_email ? <dd>{r.customer_email}</dd> : null}
+                {r.customer_phone ? <dd>{r.customer_phone}</dd> : null}
+                <dt className="text-zaro-stone/70">Qty</dt>
+                <dd className="font-medium text-zaro-graphite/80">{r.quantity}</dd>
                 {formatBudgetRange(r.budget_min_minor, r.budget_max_minor, r.currency) && (
-                  <span>Budget: {formatBudgetRange(r.budget_min_minor, r.budget_max_minor, r.currency)}</span>
+                  <>
+                    <dt className="text-zaro-stone/70">Budget</dt>
+                    <dd className="font-medium text-zaro-graphite/80">
+                      {formatBudgetRange(r.budget_min_minor, r.budget_max_minor, r.currency)}
+                    </dd>
+                  </>
                 )}
-                <span>{new Date(r.created_at).toLocaleDateString()}</span>
-              </div>
-            </div>
+                <dd className="ms-auto font-mono text-[0.6rem] uppercase text-zaro-stone/70">
+                  {new Date(r.created_at).toLocaleDateString()}
+                </dd>
+              </dl>
+            </article>
           ))}
         </div>
       )}

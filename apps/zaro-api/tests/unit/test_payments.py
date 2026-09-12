@@ -102,3 +102,34 @@ class TestClaimAmountAuthority:
 
         src = inspect.getsource(payments_service.confirm_payment)
         assert "with_for_update" in src
+
+
+class TestBl03LockOrder:
+    """Guard the global Payment -> Order -> Quote lock order shared by
+    confirm_payment and cancel_order_with_claim (BL-03). A future edit that
+    locks Order before Payment re-introduces the 40P01 deadlock cycle; these
+    source-level assertions pin the contract unit-level (the behavioural
+    regression lives in test_pg_concurrency.py)."""
+
+    @pytest.mark.asyncio
+    async def test_confirm_payment_locks_payment_before_order(self, db_session):
+        import inspect
+
+        from app.services import payments_service
+
+        src = inspect.getsource(payments_service.confirm_payment)
+        assert src.index("get_for_update(db, payment_id)") < src.index("with_for_update()")
+        assert src.index("with_for_update()") < src.index("apply_confirmed_deposit")
+
+    @pytest.mark.asyncio
+    async def test_cancel_order_with_claim_locks_payment_before_order(self, db_session):
+        import inspect
+
+        from app.services import orders_service
+
+        src = inspect.getsource(orders_service.cancel_order_with_claim)
+        payment_lock = src.index("select(Payment).where(Payment.id == active_claim.id).with_for_update()")
+        order_lock = src.index("get_order_for_update(db, order_id)")
+        assert payment_lock < order_lock
+        assert "cancel_order(db, order, reason=reason)" in src
+        assert src.index("with_for_update()") < src.index("PaymentStatus.CANCELLED")

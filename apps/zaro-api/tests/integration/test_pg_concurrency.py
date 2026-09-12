@@ -23,11 +23,12 @@ from app.core.exceptions import ConflictError, InvalidStateTransition, Validatio
 from app.core.security import hash_password
 from app.db.base import Base
 from app.models.customer import Customer
-from app.models.enums import QuoteStatus, Role
+from app.models.enums import FilePurpose, FileVisibility, QuoteStatus, Role
+from app.models.file_asset import FileAsset
 from app.models.inventory import StockMovement
 from app.models.material import Material
 from app.models.order import Order
-from app.models.payment import PaymentConfiguration
+from app.models.payment import Payment, PaymentConfiguration
 from app.models.production import ProductionMaterialReservation
 from app.models.user import User
 from app.services import (
@@ -342,3 +343,100 @@ async def test_concurrent_duplicate_claims_single_active(pg_session_factory):
 
     results = await asyncio.gather(claim_once(), claim_once())
     assert sorted(results) == ["ConflictError", "ok"], results
+
+
+async def _order_with_under_review_claim(sm, email: str) -> tuple[uuid.UUID, uuid.UUID]:
+    """Seed an order at PENDING_DEPOSIT with a deposit claim UNDER_REVIEW."""
+    async with sm() as db:
+        customer = Customer(full_name="PG Lock", email=email)
+        db.add(customer)
+        await db.flush()
+        quote = await quotes_service.create_quote(
+            db,
+            customer_id=customer.id,
+            custom_request_id=None,
+            lines=[
+                quotes_service.QuoteLineInput.build(
+                    description="Lock Widget", quantity=1, unit_label="pcs", unit_price_minor=40000
+                )
+            ],
+            valid_until=datetime.now(UTC) + timedelta(days=7),
+        )
+        quote = await quotes_service.change_status(db, quote, QuoteStatus.SENT)
+        quote = await quotes_service.change_status(db, quote, QuoteStatus.ACCEPTED)
+        order = await orders_service.create_from_quote(db, quote)
+        config = (await db.execute(select(PaymentConfiguration).limit(1))).scalar_one_or_none()
+        if config is None:
+            db.add(
+                PaymentConfiguration(
+                    account_holder="ZARO",
+                    account_identifier="CCP-LOCK",
+                    default_deposit_percentage=40,
+                )
+            )
+        else:
+            await db.execute(update(PaymentConfiguration).values(account_identifier="CCP-LOCK"))
+        await db.flush()
+
+        payment = await payments_service.create_deposit_claim(db, order, customer_id=None)
+        asset = FileAsset(
+            storage_key=f"pg/lock-{uuid.uuid4()}.png",
+            content_type="image/png",
+            size_bytes=64,
+            sha256="a" * 64,
+            purpose=FilePurpose.PAYMENT_PROOF,
+            visibility=FileVisibility.PRIVATE,
+        )
+        db.add(asset)
+        await db.flush()
+        await payments_service.attach_proof(db, payment, asset_id=asset.id)
+        await payments_service.submit_for_review(db, payment)
+        await db.commit()
+        return order.id, payment.id
+
+
+@pytest.mark.anyio
+async def test_concurrent_confirm_and_cancel_no_deadlock(pg_session_factory):
+    """confirm (P->O->Q) racing cancel (P->O->Q): one winner, never a 40P01.
+
+    Regression for BL-03: cancel previously locked Order -> Quote -> Payment,
+    inverting the (Payment, Order) pair used by confirm_payment and creating a
+    textbook PostgreSQL deadlock. Both paths must now use the same global lock
+    order (Payment -> Order -> Quote) and serialize cleanly.
+    """
+    sm = pg_session_factory
+    order_id, payment_id = await _order_with_under_review_claim(sm, "bl3@example.com")
+
+    async def confirm():
+        async with sm() as db:
+            try:
+                await payments_service.confirm_payment(db, payment_id, reviewer_user_id=uuid.uuid4())
+                await db.commit()
+                return "ok"
+            except Exception as exc:  # surfaced via result string for assertion
+                await db.rollback()
+                return f"{type(exc).__name__}: {exc}"
+
+    async def cancel():
+        async with sm() as db:
+            try:
+                await orders_service.cancel_order_with_claim(db, order_id, reason="regression")
+                await db.commit()
+                return "ok"
+            except Exception as exc:  # surfaced via result string for assertion
+                await db.rollback()
+                return f"{type(exc).__name__}: {exc}"
+
+    results = await asyncio.gather(confirm(), cancel())
+    lowered = [str(r).lower() for r in results]
+    assert not any("deadlock" in r or "40p01" in r for r in lowered), results
+    assert sorted(results)[0] == "ok", results
+    assert sorted(results)[1].startswith(("InvalidStateTransition", "ConflictError")), results
+
+    async with sm() as db:
+        order = await db.get(Order, order_id)
+        claim = await db.get(Payment, payment_id)
+    assert (str(order.status), str(claim.status)) in (
+        ("confirmed", "confirmed"),
+        ("cancelled", "cancelled"),
+    ), (str(order.status), str(claim.status))

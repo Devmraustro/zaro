@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import CustomRequestForm from "./CustomRequestForm";
 import { apiFetch } from "@/lib/api";
+import { DEFAULT_PRODUCT_TYPE, PRODUCT_TYPE_VALUES } from "@/types/product-type";
 
 vi.mock("@/lib/api", () => ({
   apiFetch: vi.fn(),
@@ -14,7 +15,7 @@ async function fillValidForm(user: ReturnType<typeof userEvent.setup>) {
   // user-event calls must be sequential; concurrent typing corrupts state.
   await user.type(screen.getByLabelText(/full name/i), "Amine Belkacem");
   await user.type(screen.getByLabelText(/email/i), "amine@example.com");
-  await user.selectOptions(screen.getByLabelText(/product type/i), "table");
+  await user.selectOptions(screen.getByLabelText(/product type/i), "dining_table");
   await user.type(screen.getByLabelText(/describe your project/i), "A large oak dining table for 8 people");
 }
 
@@ -28,7 +29,7 @@ describe("CustomRequestForm", () => {
     mockedFetch.mockResolvedValueOnce({
       id: "cr1",
       reference: "CR-2026-0001",
-      product_type: "table",
+      product_type: "dining_table",
       description: "A large oak dining table for 8 people",
       desired_dimensions: null,
       materials: null,
@@ -58,7 +59,7 @@ describe("CustomRequestForm", () => {
     });
     const payload = JSON.parse((mockedFetch.mock.calls[0]?.[1]?.body as string | undefined) ?? "{}");
     expect(payload.full_name).toBe("Amine Belkacem");
-    expect(payload.product_type).toBe("table");
+    expect(payload.product_type).toBe("dining_table");
     expect(payload.description).toBe("A large oak dining table for 8 people");
     expect(payload.budget_min_minor).toBeNull();
   });
@@ -125,5 +126,50 @@ describe("CustomRequestForm", () => {
       expect(screen.getByRole("alert")).toHaveTextContent("Too many requests");
     });
     expect(screen.queryByTestId("request-success")).not.toBeInTheDocument();
+  });
+
+  it("shows only backend-accepted product types and a valid default", () => {
+    render(<CustomRequestForm />);
+    const select = screen.getByLabelText(/product type/i) as HTMLSelectElement;
+    const renderedValues = Array.from(select.options).map((option) => option.value);
+    expect(renderedValues).toEqual([...PRODUCT_TYPE_VALUES]);
+    expect(select.value).toBe(DEFAULT_PRODUCT_TYPE);
+    expect(PRODUCT_TYPE_VALUES).toContain(select.value);
+  });
+
+  it("submits a valid product_type using just the default value", async () => {
+    const user = userEvent.setup();
+    mockedFetch.mockResolvedValueOnce({
+      id: "cr3",
+      reference: "CR-2026-0003",
+      product_type: DEFAULT_PRODUCT_TYPE,
+      description: "A long enough description for the default submission",
+      desired_dimensions: null,
+      materials: null,
+      colors: null,
+      finish: null,
+      quantity: 1,
+      budget_min_minor: null,
+      budget_max_minor: null,
+      currency: "DZD",
+      status: "submitted",
+      created_at: "2026-08-21T00:00:00Z",
+      updated_at: "2026-08-21T00:00:00Z",
+    });
+
+    render(<CustomRequestForm />);
+    await user.type(screen.getByLabelText(/full name/i), "Lina M.");
+    await user.type(
+      screen.getByLabelText(/describe your project/i),
+      "A long enough description for the default submission",
+    );
+    await user.click(screen.getByRole("button", { name: /send request/i }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("request-success")).toBeInTheDocument();
+    });
+    const payload = JSON.parse((mockedFetch.mock.calls[0]?.[1]?.body as string | undefined) ?? "{}");
+    expect(payload.product_type).toBe(DEFAULT_PRODUCT_TYPE);
+    expect(payload.product_type).toBe("dining_table");
   });
 });

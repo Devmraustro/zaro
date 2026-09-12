@@ -114,6 +114,10 @@ async def upload_payment_proof(
 ) -> dict[str, Any]:
     """Attach (or replace) proof. Rejected payments may resubmit new proof."""
     payment = await _staff_or_owner_payment(db, payment_id, user)
+    # Row-locked: serializes against concurrent confirm/cancel/reject on the
+    # same claim, so a stale PROOF_UPLOADED write can never resurrect a
+    # settled payment (append-only proof with a lost-update race).
+    payment = await payments_service.get_for_update(db, payment_id)
 
     # Validate the transition BEFORE touching storage so a payment that can
     # no longer accept proof (e.g. already confirmed) does not leave an

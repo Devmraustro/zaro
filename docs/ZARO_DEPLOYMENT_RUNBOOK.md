@@ -58,6 +58,10 @@ Browser → Vercel (apps/zaro-web, Next.js) → API base URL → FastAPI contain
 - `ZARO_CORS_ORIGINS` — JSON array with exactly the production frontend
   origin(s), e.g. `["https://zaro-zaro-web.vercel.app"]`. Wildcards are
   rejected in production by config validation.
+- `ZARO_COOKIE_SAMESITE` — REQUIRED in production (the posture gate rejects
+  `lax`). Cross-site web/API (e.g. Vercel + Railway) **must** use `none`;
+  single-domain deployments may use `strict`. `none` uses `Secure` cookies,
+  which the production gate already enforces.
 - `ZARO_ALLOWED_HOSTS` — backend host(s); rejects other Host headers (421).
 - `ZARO_STORAGE_BACKEND=s3` + `ZARO_S3_ENDPOINT_URL`, `ZARO_S3_BUCKET`,
   `ZARO_S3_ACCESS_KEY`, `ZARO_S3_SECRET_KEY`, `ZARO_S3_REGION`.

@@ -48,6 +48,7 @@ class TestSettings:
             environment="production",
             secret_key="a-production-safe-secret-key-min-32-chars",
             encryption_key="a-production-encryption-key-min-32-chars",
+            cookie_samesite="none",
         )
         assert settings.is_production is True
         assert settings.is_test is False

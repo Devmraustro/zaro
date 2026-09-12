@@ -20,12 +20,16 @@
  * the X-CSRF-Token header on cookie-sourced refresh. It rotates on every
  * login/refresh and is never persisted to browser storage.
  *
- * Session restore: because the CSRF token is memory-only, a page reload clears
- * it and silent cookie-based restore is no longer possible (no valid header can
- * be forged without the value). In-page navigation retains memory and the
- * session; a full reload re-prompts for credentials. This is the deliberate
- * consequence of keeping the CSRF token out of storage in a cross-origin
- * deployment.
+ * Session restore (FD-01): the CSRF value is memory-only, so a full page
+ * reload clears it. On a cold load the client calls GET /auth/session -- a
+ * read-only API probe that, when the HttpOnly refresh cookie is live, returns
+ * a fresh CSRF double-submit value (and re-sets the readable zaro_csrf cookie
+ * on the API origin). The SPA then runs the normal single-flight, rotating
+ * refresh to mint a short-lived access token. The probe itself issues no token
+ * and never rotates or revokes the refresh credential, so reloads cannot trip
+ * the backend reuse-detection family revocation. If no live cookie session
+ * exists the probe reports session_active=false and the user is sent to the
+ * sign-in form.
  */
 
 import type { LoginResponse, TokenResponse } from "@/types/api";
@@ -155,14 +159,40 @@ export function refreshAccessToken(): Promise<string | null> {
 }
 
 /**
+ * Cold-load session probe. GET /auth/session is read-only: when the HttpOnly
+ * refresh cookie is live it returns a fresh CSRF double-submit value (memory-only
+ * here, never stored). It does not mint an access token and does not rotate the
+ * refresh credential, so a reload can never trip reuse detection. When no live
+ * cookie session exists it reports session_active=false and no probe value is
+ * retained. A network failure is treated as "no session" without destroying
+ * anything.
+ */
+async function bootstrapSession(): Promise<boolean> {
+  if (accessToken !== null || csrfToken !== null) return true;
+  try {
+    const response = await fetch(`${API_BASE}/auth/session`, {
+      method: "GET",
+      credentials: "include",
+      headers: { Accept: "application/json" },
+    });
+    if (!response.ok) return false;
+    const data = (await response.json()) as { session_active?: boolean; csrf_token?: string | null };
+    if (data.session_active !== true || typeof data.csrf_token !== "string") return false;
+    csrfToken = data.csrf_token;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * True when a live browser session exists in memory, or can still be re-earned
- * via cookie refresh. A cold page load leaves no CSRF value in memory, so the
- * cookie-sourced refresh cannot be authorized — no network attempt is made and
- * re-login is required.
+ * via the cookie: cold page loads bootstrap the CSRF value from GET /auth/session
+ * and then refresh single-flight. Never stores anything to browser storage.
  */
 export async function hasActiveSession(): Promise<boolean> {
   if (accessToken !== null) return true;
-  if (csrfToken === null) return false;
+  if (csrfToken === null && !(await bootstrapSession())) return false;
   const token = await refreshAccessToken();
   return token !== null;
 }
@@ -192,8 +222,8 @@ async function doAdminFetch<T>(path: string, options: RequestInit, token: string
 /**
  * Authenticated admin API call.
  *
- * - Cold reload path: without an in-memory CSRF value the HttpOnly cookie
- *   session cannot be authorized; the caller is told to re-login.
+ * - Cold reload path: no in-memory credentials, so the session is bootstrapped
+ *   from the HttpOnly cookie via GET /auth/session, then refreshed single-flight.
  * - 401 path: perform exactly ONE coordinated refresh, then retry the original
  *   request once. Concurrent 401s share a single refresh (single-flight).
  * - If refresh fails, memory is cleared and the caller is told to re-login.
@@ -201,7 +231,7 @@ async function doAdminFetch<T>(path: string, options: RequestInit, token: string
 export async function adminFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
   let token = accessToken;
   if (token === null) {
-    if (csrfToken === null) {
+    if (csrfToken === null && !(await bootstrapSession())) {
       throw new AuthError("Not signed in — sign in again", "not_signed_in");
     }
     token = await refreshAccessToken();

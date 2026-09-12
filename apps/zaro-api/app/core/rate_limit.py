@@ -5,6 +5,13 @@ limiter degrades to a per-process in-memory store so availability is preserved;
 this fallback is documented as unsuitable for multi-worker production
 deployments and exists mainly for tests and local development.
 
+Redis failures open a short circuit breaker (``breaker_open_seconds``). While
+open, every request uses the in-memory store without touching Redis. The
+breaker automatically half-opens after the window: the next request re-probes
+Redis, and if it responds the limiter returns to the shared backend -- so
+counts synchronize again shortly after a Redis recovery instead of being
+permanently stuck on per-process counters.
+
 Client IP extraction only honours X-Forwarded-For when the direct peer address
 is an explicitly configured trusted proxy.
 """
@@ -23,6 +30,11 @@ from app.core.logging import get_logger
 logger = get_logger("app.core.rate_limit")
 
 _KEY_PREFIX = "zaro:rl"
+
+# How long Redis failures keep the circuit breaker open before a re-probe.
+# Chosen so transient blips do not hammer a down Redis while recovery still
+# re-arms the shared counters within a minute.
+_BREAKER_OPEN_SECONDS = 30.0
 
 
 @dataclass
@@ -51,16 +63,26 @@ def _window_expired(key: str, now: float) -> bool:
 
 
 class RateLimiter:
-    """Fixed-window counter limiter with Redis primary and in-memory fallback."""
+    """Fixed-window counter limiter with Redis primary and in-memory fallback.
 
-    def __init__(self, settings: Settings) -> None:
+    The breaker guarantees bounded Redis outage: failures open it for
+    ``breaker_open_seconds`` (in-memory fallback), then a re-probe decides
+    whether to re-arm the shared Redis backend (half-open -> closed).
+    """
+
+    def __init__(self, settings: Settings, *, breaker_open_seconds: float = _BREAKER_OPEN_SECONDS) -> None:
         self._settings = settings
+        self._breaker_open_seconds = breaker_open_seconds
         self._memory = _MemoryStore()
         self._redis: aioredis.Redis | None = None
-        self._redis_failed = False
+        self._breaker_open_until = 0.0
+        self._time = time.time
+
+    def _set_breaker_open(self) -> None:
+        self._breaker_open_until = self._time() + self._breaker_open_seconds
 
     def _get_redis(self) -> aioredis.Redis | None:
-        if self._redis_failed:
+        if self._time() < self._breaker_open_until:
             return None
         if self._redis is None:
             from app.db.redis import get_redis_client
@@ -68,12 +90,13 @@ class RateLimiter:
             try:
                 self._redis = get_redis_client(self._settings)
             except Exception:  # pragma: no cover - defensive
-                self._redis_failed = True
+                self._set_breaker_open()
                 return None
         return self._redis
 
     def mark_redis_unavailable(self) -> None:
-        self._redis_failed = True
+        """Force the breaker open (used by tests to simulate an outage)."""
+        self._set_breaker_open()
 
     async def hit(
         self,
@@ -90,7 +113,7 @@ class RateLimiter:
         exceeded. With ``count_only=True`` the counter is read without
         incrementing (used for pre-checks such as failure counters).
         """
-        now = time.time()
+        now = self._time()
         window_start = int(now // window_seconds) * window_seconds
         key = f"{_KEY_PREFIX}:{scope}:{identifier}:{window_start}:{window_seconds}"
 
@@ -119,7 +142,7 @@ class RateLimiter:
             return int(result[0])
         except (RedisError, OSError) as exc:
             logger.warning("rate_limiter_redis_unavailable", error=str(exc))
-            self._redis_failed = True
+            self._set_breaker_open()
             return None
 
     def _hit_memory(self, key: str, count_only: bool) -> int:

@@ -12,7 +12,7 @@ Authorization model:
 from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import _get_request_context, require_permission
@@ -79,11 +79,25 @@ def _serialize_product_admin(product) -> dict[str, Any]:
 @router.post("/categories", response_model=CategoryAdminResponse, status_code=201)
 async def create_category(
     payload: CategoryCreate,
+    request: Request,
     user: Annotated[User, Depends(require_permission(Permission.PRODUCTS_CREATE))],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> CategoryAdminResponse:
     category = await catalog_service.create_category(
         db, name=payload.name, description=payload.description, sort_order=payload.sort_order
+    )
+    request_id, ip_address, user_agent = _get_request_context(request)
+    await record_event(
+        db,
+        action=AuditAction.CATEGORY_CREATED,
+        result=AuditResult.SUCCESS,
+        actor_user_id=user.id,
+        resource_type="category",
+        resource_id=str(category.id),
+        request_id=request_id,
+        ip_address=ip_address,
+        user_agent=user_agent,
+        metadata={"slug": category.slug},
     )
     await db.commit()
     return CategoryAdminResponse(
@@ -102,12 +116,26 @@ async def create_category(
 async def update_category(
     category_id: UUID,
     payload: CategoryUpdate,
+    request: Request,
     user: Annotated[User, Depends(require_permission(Permission.PRODUCTS_UPDATE))],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> CategoryAdminResponse:
     category = await catalog_service.get_category(db, category_id)
     changes = payload.model_dump(exclude_unset=True)
     category = await catalog_service.update_category(db, category, changes)
+    request_id, ip_address, user_agent = _get_request_context(request)
+    await record_event(
+        db,
+        action=AuditAction.CATEGORY_UPDATED,
+        result=AuditResult.SUCCESS,
+        actor_user_id=user.id,
+        resource_type="category",
+        resource_id=str(category.id),
+        request_id=request_id,
+        ip_address=ip_address,
+        user_agent=user_agent,
+        metadata={"fields": sorted(changes.keys())},
+    )
     await db.commit()
     return CategoryAdminResponse(
         id=category.id,
@@ -174,13 +202,11 @@ async def create_product(
 async def list_products_admin(
     _user: Annotated[User, Depends(require_permission(Permission.PRODUCTS_READ))],
     db: Annotated[AsyncSession, Depends(get_db)],
-    page: int = 1,
-    page_size: int = 20,
-    status: str | None = None,
-    search: str | None = None,
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=100)] = 20,
+    status: Annotated[str | None, Query(pattern=r"^(draft|active|archived)$")] = None,
+    search: Annotated[str | None, Query(max_length=200)] = None,
 ) -> dict[str, Any]:
-    page = max(page, 1)
-    page_size = min(max(page_size, 1), 100)
     products, total = await catalog_service.list_admin_products(
         db, page=page, page_size=page_size, status=status, search=search
     )
@@ -338,6 +364,19 @@ async def create_variant(
     await _check_variant_price_authorization(request, user, payload.price_override_minor is not None)
     product = await catalog_service.get_product(db, product_id)
     variant = await catalog_service.create_variant(db, product, payload)
+    request_id, ip_address, user_agent = _get_request_context(request)
+    await record_event(
+        db,
+        action=AuditAction.PRODUCT_VARIANT_CREATED,
+        result=AuditResult.SUCCESS,
+        actor_user_id=user.id,
+        resource_type="variant",
+        resource_id=str(variant.id),
+        request_id=request_id,
+        ip_address=ip_address,
+        user_agent=user_agent,
+        metadata={"product_id": str(product.id), "sku": variant.sku},
+    )
     await db.commit()
     return {
         "id": str(variant.id),
@@ -369,6 +408,19 @@ async def update_variant(
         raise NotFoundError("Variant not found")
     for field_name, value in changes.items():
         setattr(variant, field_name, value)
+    request_id, ip_address, user_agent = _get_request_context(request)
+    await record_event(
+        db,
+        action=AuditAction.PRODUCT_VARIANT_UPDATED,
+        result=AuditResult.SUCCESS,
+        actor_user_id=user.id,
+        resource_type="variant",
+        resource_id=str(variant.id),
+        request_id=request_id,
+        ip_address=ip_address,
+        user_agent=user_agent,
+        metadata={"product_id": str(product.id), "fields": sorted(changes.keys())},
+    )
     await db.commit()
     return {
         "id": str(variant.id),

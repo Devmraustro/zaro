@@ -159,6 +159,12 @@ class Settings(BaseSettings):
             errors.append("cookie_secure_in_production_only cannot disable Secure cookies in production")
         if self.cookie_samesite == "none" and not self.cookie_secure_in_production_only:
             errors.append("SameSite=None requires Secure cookies")
+        if self.cookie_samesite == "lax":
+            errors.append(
+                "cookie_samesite must be explicitly 'strict' or 'none' in production "
+                "(lax silently breaks cross-site cookie auth when the frontend and "
+                "API live on different registrable domains)"
+            )
         if self.password_min_length < 8:
             errors.append("password_min_length must be at least 8 in production")
         if self.access_token_expire_minutes > 60:

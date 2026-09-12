@@ -108,6 +108,25 @@ async def revoke_session_by_secret(db: AsyncSession, *, user_id: uuid.UUID, refr
     return True
 
 
+async def is_refresh_session_live(db: AsyncSession, *, refresh_secret: str) -> bool:
+    """True when a raw refresh credential maps to a live browser session.
+
+    Pure read: no rotation, no revocation, no reuse signal -- so the session
+    bootstrap endpoint can probe the HttpOnly cookie on a cold page load
+    without churning the refresh credential or minting tokens.
+    """
+    token_hash = hash_refresh_secret(refresh_secret)
+    result = await db.execute(select(AuthSession).where(AuthSession.token_hash == token_hash))
+    session = result.scalar_one_or_none()
+    if session is None or session.revoked_at is not None:
+        return False
+    if _as_utc(session.expires_at) <= _utcnow():
+        return False
+    user_result = await db.execute(select(User).where(User.id == session.user_id))
+    user = user_result.scalar_one_or_none()
+    return user is not None and user.is_active
+
+
 async def authenticate_login(
     db: AsyncSession,
     settings: Settings,

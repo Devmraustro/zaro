@@ -427,7 +427,12 @@ async def start_production(
     *,
     actor_user_id: uuid.UUID | None = None,
 ) -> ProductionOrder:
-    """Start production (MATERIALS_RESERVED → IN_PRODUCTION)."""
+    """Start production (MATERIALS_RESERVED → IN_PRODUCTION).
+
+    Records the producing actor as the assigned worker when no worker is
+    assigned yet, so the QC segregation-of-duties guard can fire on that
+    same order. Never overwrites an existing assignment.
+    """
     po = await get_production_order_for_update(db, production_order_id)
     if ProductionOrderStatus(po.status) != ProductionOrderStatus.MATERIALS_RESERVED:
         raise InvalidStateTransition(
@@ -437,6 +442,8 @@ async def start_production(
     validate_production_transition(ProductionOrderStatus(po.status), ProductionOrderStatus.IN_PRODUCTION)
     po.status = ProductionOrderStatus.IN_PRODUCTION
     po.production_started_at = datetime.now(UTC)
+    if po.assigned_worker_id is None and actor_user_id is not None:
+        po.assigned_worker_id = actor_user_id
     db.add(po)
     await db.flush()
     return po
@@ -469,7 +476,12 @@ async def resume_production(
     *,
     actor_user_id: uuid.UUID | None = None,
 ) -> ProductionOrder:
-    """Resume production (PAUSED → IN_PRODUCTION)."""
+    """Resume production (PAUSED → IN_PRODUCTION).
+
+    Like start_production, records the resuming actor as the assigned worker
+    when none is recorded yet (e.g. legacy rows), keeping the QC segregation
+    guard live. Never overwrites an existing assignment.
+    """
     po = await get_production_order_for_update(db, production_order_id)
     if ProductionOrderStatus(po.status) != ProductionOrderStatus.PAUSED:
         raise InvalidStateTransition(
@@ -479,6 +491,8 @@ async def resume_production(
     validate_production_transition(ProductionOrderStatus(po.status), ProductionOrderStatus.IN_PRODUCTION)
     po.status = ProductionOrderStatus.IN_PRODUCTION
     db.add(po)
+    if po.assigned_worker_id is None and actor_user_id is not None:
+        po.assigned_worker_id = actor_user_id
     await db.flush()
     return po
 

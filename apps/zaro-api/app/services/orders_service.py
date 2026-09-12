@@ -23,8 +23,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ConflictError, InvalidStateTransition, NotFoundError, ValidationFailedError
 from app.models.customer import Customer
-from app.models.enums import ORDER_TRANSITIONS, OrderStatus, QuoteStatus
+from app.models.enums import ORDER_TRANSITIONS, OrderStatus, PaymentStatus, QuoteStatus
 from app.models.order import Order, OrderLine
+from app.models.payment import Payment
 from app.models.quote import Quote
 
 
@@ -195,6 +196,55 @@ async def cancel_order(db: AsyncSession, order: Order, *, reason: str | None = N
             locked.cancelled_at = datetime.now(UTC)
             db.add(locked)
     return order
+
+
+async def cancel_order_with_claim(
+    db: AsyncSession, order_id: uuid.UUID, *, reason: str | None = None
+) -> tuple[Order, uuid.UUID | None, str]:
+    """Cancel an order and its unresolved deposit claim atomically.
+
+    Locking protocol (caller's transaction): Payment -> Order -> Quote -- the
+    SAME global order used by ``payments_service.confirm_payment``. The active
+    deposit claim is located with a plain read, row-locked first, and then the
+    order and its linked quote. A concurrent confirm and this cancel therefore
+    serialize on the payment/order rows instead of deadlocking: locking Order
+    before Payment would invert the (Payment, Order) pair and create a
+    PostgreSQL 40P01 cycle.
+
+    Returns ``(order, cancelled_claim_id, old_status)``. ``cancelled_claim_id``
+    is non-None when an unresolved claim existed and was moved to CANCELLED.
+    """
+    from app.services import payments_service
+
+    # 1. Locate the active claim (plain read) so it can be locked first.
+    active_claim = await payments_service.find_active_for_order(db, order_id)
+
+    # 2. Row-lock the claim before the order.
+    locked_claim: Payment | None = None
+    if active_claim is not None:
+        locked_claim = (
+            await db.execute(select(Payment).where(Payment.id == active_claim.id).with_for_update())
+        ).scalar_one_or_none()
+
+    # 3. Row-lock the order, then the linked quote (cancel_order does the
+    #    quote hop). Serializes against concurrent payment confirmation.
+    order = await get_order_for_update(db, order_id)
+    old_status = str(order.status)
+    order = await cancel_order(db, order, reason=reason)
+
+    # 4. Cancel the locked claim if it still awaits action (append-only: the
+    #    claim row stays, status moves through the validated state machine).
+    cancelled_claim_id: uuid.UUID | None = None
+    if locked_claim is not None and PaymentStatus(locked_claim.status) in (
+        PaymentStatus.PENDING,
+        PaymentStatus.PROOF_UPLOADED,
+        PaymentStatus.UNDER_REVIEW,
+    ):
+        payments_service.validate_transition(PaymentStatus(locked_claim.status), PaymentStatus.CANCELLED)
+        locked_claim.status = PaymentStatus.CANCELLED
+        db.add(locked_claim)
+        cancelled_claim_id = locked_claim.id
+    return order, cancelled_claim_id, old_status
 
 
 async def list_for_customer(db: AsyncSession, customer_id: uuid.UUID) -> list[Order]:

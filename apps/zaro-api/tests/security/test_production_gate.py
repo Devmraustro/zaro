@@ -9,12 +9,20 @@ _PRODUCTION_BASE = {
     "secret_key": "p" * 48,
     "encryption_key": "e" * 48,
     "cors_origins": ["https://app.example.com"],
+    # Production cookie auth: cross-site web/API needs SameSite=None (Secure is
+    # already mandatory). The posture gate rejects the lax default outright.
+    "cookie_samesite": "none",
 }
 
 
 class TestProductionGate:
     def test_hardened_production_config_is_accepted(self):
         settings = Settings(**_PRODUCTION_BASE)
+        assert settings.is_production is True
+        assert settings.cookie_secure is True
+
+    def test_strict_samesite_production_is_accepted(self):
+        settings = Settings(**{**_PRODUCTION_BASE, "cookie_samesite": "strict"})
         assert settings.is_production is True
         assert settings.cookie_secure is True
 
@@ -28,6 +36,7 @@ class TestProductionGate:
             {"cors_origins": ["*"]},
             {"cors_origins": []},
             {"cookie_secure_in_production_only": False},
+            {"cookie_samesite": "lax"},
             {"password_min_length": 4},
             {"access_token_expire_minutes": 120},
             {"allowed_hosts": ["*"]},

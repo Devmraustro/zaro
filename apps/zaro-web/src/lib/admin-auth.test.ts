@@ -15,7 +15,9 @@ import type { Mock } from "vitest";
  *  7. a 401 triggers exactly one refresh, then one retry
  *  8. concurrent 401s share a single refresh (single-flight)
  *  9. refresh failure clears access and CSRF memory and forces re-auth
- * 10. a cold reload (no in-memory CSRF) cannot silently restore the session
+ * 10. a cold reload restores a live cookie session only through the read-only
+ *     /auth/session probe (no token minted, no rotation) followed by the normal
+ *     single-flight refresh; nothing is written to browser storage
  * 11. logout reaches the backend with the bearer token and CSRF header
  * 12. auth tokens and csrf are never written to localStorage/sessionStorage
  */
@@ -247,12 +249,49 @@ describe("admin auth security", () => {
     expect(init.headers?.["X-CSRF-Token"]).toBeUndefined();
   });
 
-  it("a cold reload cannot silently restore the session (no in-memory CSRF value)", async () => {
+  it("a cold reload restores the session via bootstrap + refresh without storing anything", async () => {
     const fetchMock = vi.mocked(fetch);
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse(200, { session_active: true, csrf_token: "csrf-b1" }) as Response)
+      .mockResolvedValueOnce(jsonResponse(200, refreshBody) as Response)
+      .mockResolvedValueOnce(jsonResponse(200, { items: [] }) as Response);
+    const auth = await loadAuth();
+
+    const data = await auth.adminFetch<{ items: unknown[] }>("/admin/products");
+
+    expect(data.items).toEqual([]);
+    const [bootstrap, refresh, request] = [
+      lastCall(fetchMock, 0),
+      lastCall(fetchMock, 1),
+      lastCall(fetchMock, 2),
+    ];
+    expect(bootstrap.url).toMatch(/\/auth\/session$/);
+    expect(bootstrap.init.method).toBe("GET");
+    expect(bootstrap.init.credentials).toBe("include");
+    expect(refresh.init.headers?.["X-CSRF-Token"]).toBe("csrf-b1");
+    expect(request.init.headers?.["Authorization"]).toBe("Bearer at-2");
+    expect(auth.getAccessToken()).toBe("at-2");
+    expect((window as unknown as { localStorage: Storage }).localStorage.length).toBe(0);
+    expect((window as unknown as { sessionStorage: Storage }).sessionStorage.length).toBe(0);
+  });
+
+  it("a cold reload with no live cookie session reports not_signed_in without refreshing", async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { session_active: false, csrf_token: null }) as Response);
     const auth = await loadAuth();
 
     await expect(auth.adminFetch("/admin/products")).rejects.toMatchObject({ code: "not_signed_in" });
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(callsFor(fetchMock, "/auth/refresh")).toHaveLength(0);
+    expect(auth.getAccessToken()).toBeNull();
+  });
+
+  it("a cold reload with a network-failing bootstrap reports not_signed_in and keeps memory clean", async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockRejectedValueOnce(new TypeError("network down"));
+    const auth = await loadAuth();
+
+    await expect(auth.adminFetch("/admin/products")).rejects.toMatchObject({ code: "not_signed_in" });
+    expect(callsFor(fetchMock, "/auth/refresh")).toHaveLength(0);
     expect(auth.getAccessToken()).toBeNull();
   });
 
@@ -263,15 +302,33 @@ describe("admin auth security", () => {
 
     await auth.login("ops@example.com", "password-1");
     await expect(auth.hasActiveSession()).resolves.toBe(true);
+    expect(callsFor(fetchMock, "/auth/session")).toHaveLength(0);
     expect(callsFor(fetchMock, "/auth/refresh")).toHaveLength(0);
   });
 
-  it("hasActiveSession is false on a cold reload without attempting a refresh", async () => {
+  it("hasActiveSession restores a valid cookie session on a cold reload", async () => {
     const fetchMock = vi.mocked(fetch);
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse(200, { session_active: true, csrf_token: "csrf-b1" }) as Response)
+      .mockResolvedValueOnce(jsonResponse(200, refreshBody) as Response);
+    const auth = await loadAuth();
+
+    await expect(auth.hasActiveSession()).resolves.toBe(true);
+    expect(callsFor(fetchMock, "/auth/session")).toHaveLength(1);
+    expect(callsFor(fetchMock, "/auth/refresh")).toHaveLength(1);
+    expect(auth.getAccessToken()).toBe("at-2");
+    expect((window as unknown as { localStorage: Storage }).localStorage.length).toBe(0);
+    expect((window as unknown as { sessionStorage: Storage }).sessionStorage.length).toBe(0);
+  });
+
+  it("hasActiveSession is false on a cold reload when no live cookie session exists", async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { session_active: false, csrf_token: null }) as Response);
     const auth = await loadAuth();
 
     await expect(auth.hasActiveSession()).resolves.toBe(false);
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(callsFor(fetchMock, "/auth/refresh")).toHaveLength(0);
+    expect(auth.getAccessToken()).toBeNull();
   });
 
   it("logout POSTs to /auth/logout with the bearer token and CSRF header, then clears memory", async () => {

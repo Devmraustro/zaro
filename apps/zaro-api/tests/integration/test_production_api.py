@@ -76,7 +76,7 @@ async def stocked(client, owner_headers, material):
 
 
 @pytest.mark.anyio
-async def test_full_lifecycle_via_api(client, owner_headers, stocked, confirmed_order_id):
+async def test_full_lifecycle_via_api(client, owner_headers, stocked, confirmed_order_id, auth_header_factory):
     # create
     resp = await client.post(
         "/api/v1/admin/production",
@@ -122,7 +122,7 @@ async def test_full_lifecycle_via_api(client, owner_headers, stocked, confirmed_
     mr_id = reservations[0]["id"]
     assert reservations[0]["material_code"] == "API-PINE-01"
 
-    # start
+    # start -> the acting user is recorded as the assigned worker
     resp = await client.post(f"/api/v1/admin/production/{po_id}/start", json={}, headers=owner_headers)
     assert resp.status_code == 200, resp.text
 
@@ -138,13 +138,19 @@ async def test_full_lifecycle_via_api(client, owner_headers, stocked, confirmed_
     )
     assert resp.status_code == 200, resp.text
 
-    # QC round
+    # QC round: the owner who started production is the assigned worker, so
+    # their own QC attempt is rejected (segregation of duties).
     resp = await client.post(f"/api/v1/admin/production/{po_id}/qc/start", json={}, headers=owner_headers)
+    assert resp.status_code == 403, resp.text
+
+    # A separate, authorized inspector runs the QC round.
+    inspector_headers, _ = await auth_header_factory(role="production")
+    resp = await client.post(f"/api/v1/admin/production/{po_id}/qc/start", json={}, headers=inspector_headers)
     assert resp.status_code == 200, resp.text
     resp = await client.post(
         f"/api/v1/admin/production/{po_id}/qc/submit",
         json={"approved": True, "notes": "looks good"},
-        headers=owner_headers,
+        headers=inspector_headers,
     )
     assert resp.status_code == 200, resp.text
     assert resp.json()["status"] == "ready"
@@ -156,7 +162,7 @@ async def test_full_lifecycle_via_api(client, owner_headers, stocked, confirmed_
 
 
 @pytest.mark.anyio
-async def test_qc_requires_materials_accounted(client, owner_headers, stocked, confirmed_order_id):
+async def test_qc_requires_materials_accounted(client, owner_headers, stocked, confirmed_order_id, auth_header_factory):
     resp = await client.post(
         "/api/v1/admin/production",
         json={"order_id": confirmed_order_id},
@@ -171,7 +177,16 @@ async def test_qc_requires_materials_accounted(client, owner_headers, stocked, c
     await client.post(f"/api/v1/admin/production/{po_id}/reserve", json={}, headers=owner_headers)
     await client.post(f"/api/v1/admin/production/{po_id}/start", json={}, headers=owner_headers)
 
+    # The owner who started production is the assigned worker: their own QC
+    # attempt is rejected by segregation of duties before material accounting
+    # is evaluated.
     resp = await client.post(f"/api/v1/admin/production/{po_id}/qc/start", json={}, headers=owner_headers)
+    assert resp.status_code == 403, resp.text
+
+    # An independent inspector hits the material-accounting gate: open
+    # reservations block the start of QC.
+    inspector_headers, _ = await auth_header_factory(role="production")
+    resp = await client.post(f"/api/v1/admin/production/{po_id}/qc/start", json={}, headers=inspector_headers)
     assert resp.status_code == 422, resp.text
 
 

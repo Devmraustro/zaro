@@ -1,23 +1,15 @@
 import Link from "next/link";
-import type { Product } from "@/types/api";
+import { mediaUrl, primaryImage } from "@/lib/media";
 import { formatPrice } from "@/lib/format";
+import StockBadge from "@/components/ui/StockBadge";
+import FurnitureArtwork from "@/components/FurnitureArtwork";
+import type { Product } from "@/types/api";
 
-const STOCK_LABELS: Record<string, string> = {
-  in_stock: "In stock",
-  made_to_order: "Made to order",
-  out_of_stock: "Out of stock",
-};
-
-export function mediaUrl(urlPath: string): string {
-  const base = (process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8001").replace(
-    /\/api\/v1\/?$/,
-    "",
-  );
-  return `${base}${urlPath}`;
-}
+/** Re-exported for the product detail page and external callers. */
+export { mediaUrl } from "@/lib/media";
 
 export default function ProductCard({ product }: { product: Product }) {
-  const cover = product.media.find((m) => m.media_kind === "image");
+  const cover = primaryImage(product);
   const price =
     product.variants.length > 0
       ? Math.min(...product.variants.map((v) => v.effective_price_minor))
@@ -26,32 +18,39 @@ export default function ProductCard({ product }: { product: Product }) {
   return (
     <Link
       href={`/shop/${product.slug}`}
-      className="group block border border-zaro-ivory-dark bg-white transition-shadow hover:shadow-lg"
+      className="group block"
       data-testid="product-card"
     >
-      <div className="aspect-square w-full overflow-hidden bg-zaro-ivory-dark">
+      <div className="relative aspect-[4/5] w-full overflow-hidden bg-zaro-ivory-dark">
         {cover ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
             src={mediaUrl(cover.url_path)}
             alt={cover.alt_text ?? product.name}
-            className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
+            className="h-full w-full object-cover transition-transform duration-500 ease-out group-hover:scale-[1.04]"
+            decoding="async"
+            loading="lazy"
           />
         ) : (
-          <div className="flex h-full w-full items-center justify-center font-serif text-4xl text-zaro-bronze/40">
-            ZARO
-          </div>
+          <FurnitureArtwork variant="piece" tone="light" watermark />
         )}
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 bg-zaro-black/0 transition-colors duration-300 group-hover:bg-zaro-black/[0.04]"
+        />
+        <div className="absolute end-3 top-3">
+          <StockBadge status={product.stock_status} />
+        </div>
       </div>
-      <div className="p-4">
-        <h3 className="font-serif text-lg font-semibold text-zaro-black group-hover:text-zaro-bronze">
+      <div className="pt-4">
+        <h3 className="font-serif text-lg font-medium leading-snug text-zaro-black transition-colors duration-200 group-hover:text-zaro-bronze">
           {product.name}
         </h3>
-        <div className="mt-1 flex items-center justify-between">
-          <span className="text-sm font-medium text-zaro-graphite">{formatPrice(price, product.currency)}</span>
-          <span className="text-xs uppercase tracking-wider text-zaro-steel">
-            {STOCK_LABELS[product.stock_status] ?? product.stock_status}
-          </span>
+        <div className="mt-1.5 flex items-baseline justify-between gap-3">
+          <p className="text-sm font-medium text-zaro-graphite">{formatPrice(price, product.currency)}</p>
+          <p className="font-mono text-[0.625rem] uppercase tracking-[0.14em] text-zaro-stone">
+            {product.product_code}
+          </p>
         </div>
       </div>
     </Link>
