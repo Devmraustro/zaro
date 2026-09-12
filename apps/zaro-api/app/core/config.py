@@ -171,6 +171,10 @@ class Settings(BaseSettings):
             errors.append("access_token_expire_minutes must not exceed 60 in production")
         if "*" in self.allowed_hosts:
             errors.append("allowed_hosts must not contain wildcards in production")
+        if self.storage_backend == "s3" and not (
+            self.s3_bucket and self.s3_access_key and self.s3_secret_key
+        ):
+            errors.append("s3 storage backend requires s3_bucket, s3_access_key and s3_secret_key")
         if errors:
             raise ValueError("Insecure production configuration: " + "; ".join(errors))
         return self

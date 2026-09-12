@@ -63,3 +63,20 @@ class TestProductionGate:
     def test_jwt_algorithm_locked_to_hs256(self):
         with pytest.raises(ValidationError):
             Settings(_env_file=None, jwt_algorithm="none")  # type: ignore[arg-type]
+
+    def test_s3_backend_requires_credentials_in_production(self):
+        merged = {**_PRODUCTION_BASE, "storage_backend": "s3"}
+        with pytest.raises(ValidationError) as excinfo:
+            Settings(**merged)
+        assert "s3 storage backend requires" in str(excinfo.value)
+
+    def test_s3_backend_with_credentials_is_accepted(self):
+        merged = {
+            **_PRODUCTION_BASE,
+            "storage_backend": "s3",
+            "s3_bucket": "zaro-assets",
+            "s3_access_key": "k" * 16,
+            "s3_secret_key": "s" * 16,
+        }
+        settings = Settings(**merged)
+        assert settings.storage_backend == "s3"

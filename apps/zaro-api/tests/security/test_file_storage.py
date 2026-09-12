@@ -93,18 +93,18 @@ class TestTraversalProtection:
     async def test_open_rejects_traversal_keys(self, storage: LocalFileStorage):
         for key in ("../secret.txt", "..\\secret.txt", "avatars/../../secret.txt", "", "/abs/path"):
             with pytest.raises(FileKeyError):
-                storage.open(key)
+                await storage.open(key)
 
     async def test_delete_rejects_traversal_keys(self, storage: LocalFileStorage):
         with pytest.raises(FileKeyError):
-            storage.delete("../outside.txt")
+            await storage.delete("../outside.txt")
 
     async def test_roundtrip_open_and_delete(self, storage: LocalFileStorage):
         stored = await storage.save(PNG_BYTES, filename="pic.png", content_type="image/png", category="avatars")
-        assert storage.open(stored.key) == PNG_BYTES
-        storage.delete(stored.key)
+        assert await storage.open(stored.key) == PNG_BYTES
+        await storage.delete(stored.key)
         with pytest.raises(FileKeyError):
-            storage.open(stored.key)
+            await storage.open(stored.key)
 
 
 class TestSignedUrls:

@@ -226,7 +226,7 @@ async def stream_file_content(
     if not verify_signed_url(settings, asset.storage_key, token):
         raise ForbiddenError("Invalid or expired file token")
     backend = get_storage_backend(settings)
-    data = backend.open(asset.storage_key)
+    data = await backend.open(asset.storage_key)
     return Response(
         content=data,
         media_type=asset.content_type,
@@ -248,7 +248,7 @@ async def stream_public_file(
     if asset.visibility != FileVisibility.PUBLIC or asset.purpose != FilePurpose.PRODUCT_MEDIA:
         raise NotFoundError("File not found")
     backend = get_storage_backend(settings)
-    data = backend.open(asset.storage_key)
+    data = await backend.open(asset.storage_key)
     return Response(
         content=data,
         media_type=asset.content_type,
