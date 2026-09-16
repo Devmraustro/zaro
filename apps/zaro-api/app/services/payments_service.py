@@ -120,6 +120,12 @@ async def create_deposit_claim(db: AsyncSession, order: Order, *, customer_id: u
             "Payments can only be opened for orders pending deposit",
             details={"current": str(OrderStatus(order.status).value)},
         )
+    if order.deposit_required_minor < 1:
+        # Defensive backstop: quotes/orders must carry a positive deposit
+        # (enforced in compute_totals), but any legacy zero-deposit row must
+        # fail with a client error instead of violating the amount_minor > 0
+        # check constraint and surfacing as an opaque 500.
+        raise ValidationFailedError("Deposit claim requires a positive deposit amount")
     active = await find_active_for_order(db, order.id)
     if active is not None:
         raise ConflictError("A deposit claim already exists for this order")

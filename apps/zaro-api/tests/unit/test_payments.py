@@ -133,3 +133,57 @@ class TestBl03LockOrder:
         assert payment_lock < order_lock
         assert "cancel_order(db, order, reason=reason)" in src
         assert src.index("with_for_update()") < src.index("PaymentStatus.CANCELLED")
+
+
+class TestZeroDepositClaimGuard:
+    """Regression for the zero-deposit 500: a quote whose deposit rounds to 0
+    previously produced an order that could never open a payment claim
+    (ck_payments_amount_positive), surfacing as an unhandled IntegrityError.
+    New quotes are rejected in compute_totals; this test proves a legacy
+    zero-deposit order now fails cleanly instead of 500ing."""
+
+    @pytest.mark.asyncio
+    async def test_legacy_zero_deposit_order_cannot_open_claim(self, db_session):
+        from datetime import UTC, datetime
+        from uuid import uuid4
+
+        from sqlalchemy import func, select
+
+        from app.models.enums import OrderStatus
+        from app.models.order import Order
+        from app.models.payment import Payment
+        from app.services import payments_service
+
+        config = await payments_service.get_configuration(db_session)
+        config.account_identifier = "CCP-123"
+        await payments_service.update_configuration(db_session, account_identifier="CCP-123")
+
+        now = datetime.now(UTC)
+        order = Order(
+            id=uuid4(),
+            order_number="ZO-LEGACY-000001",
+            customer_id=None,
+            quote_id=None,
+            custom_request_id=None,
+            status=OrderStatus.PENDING_DEPOSIT,
+            currency="DZD",
+            subtotal_minor=1,
+            discount_minor=0,
+            delivery_fee_minor=0,
+            total_minor=1,
+            deposit_required_minor=0,
+            deposit_paid_minor=0,
+            balance_due_minor=1,
+            notes=None,
+            created_at=now,
+            updated_at=now,
+        )
+        db_session.add(order)
+        await db_session.commit()
+
+        with pytest.raises(ValidationFailedError):
+            await payments_service.create_deposit_claim(db_session, order, customer_id=None)
+        await db_session.rollback()
+
+        count = (await db_session.execute(select(func.count()).select_from(Payment))).scalar_one()
+        assert count == 0

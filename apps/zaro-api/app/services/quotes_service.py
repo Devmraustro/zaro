@@ -136,7 +136,14 @@ def compute_totals(
         raise ValidationFailedError("discount cannot exceed the subtotal")
     delivery_fee = Money(delivery_fee_minor, Currency.DZD)
     total = subtotal - discount + delivery_fee
+    if total == Money.zero(Currency.DZD):
+        raise ValidationFailedError("quote total must be greater than zero")
     deposit_amount = total.percentage(deposit_percentage)
+    if deposit_amount == Money.zero(Currency.DZD):
+        # A deposit of 0 would produce an unpayable order: payments require a
+        # positive amount (ck_payments_amount_positive), so the order would
+        # be stuck PENDING_DEPOSIT forever with no claim it can ever open.
+        raise ValidationFailedError("deposit_percentage must produce a positive deposit amount for this total")
     balance = total - deposit_amount  # percentage() guarantees deposit <= total
 
     totals = {
