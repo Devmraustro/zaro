@@ -41,9 +41,7 @@ class TestLoginSuccess:
         assert "httponly" not in csrf_cookie.lower()
         assert "path=/api/v1/auth" in refresh_cookie.lower()
 
-    async def test_login_response_returns_csrf_token_matching_cookie(
-        self, client: AsyncClient, user_factory
-    ):
+    async def test_login_response_returns_csrf_token_matching_cookie(self, client: AsyncClient, user_factory):
         user = await user_factory()
         resp = await client.post("/api/v1/auth/login", json={"email": user.email, "password": "test-password-123"})
         assert resp.status_code == 200

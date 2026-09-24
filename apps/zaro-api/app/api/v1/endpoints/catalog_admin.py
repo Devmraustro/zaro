@@ -12,19 +12,27 @@ Authorization model:
 from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Path, Query, Request
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import _get_request_context, require_permission
+from app.api.v1.endpoints.files import _serialize_asset
+from app.core.exceptions import NotFoundError
 from app.db.session import get_db
 from app.models.audit_enums import AuditAction, AuditResult
 from app.models.enums import Permission
+from app.models.localization import CategoryLocalization, ProductLocalization
 from app.models.user import User
 from app.schemas.catalog import (
+    LOCALES,
     CategoryAdminResponse,
     CategoryCreate,
+    CategoryLocalizationUpsert,
     CategoryUpdate,
+    LocalizationResponse,
     ProductCreate,
+    ProductLocalizationUpsert,
     ProductPriceSet,
     ProductUpdate,
     VariantCreate,
@@ -37,6 +45,7 @@ router = APIRouter(prefix="/admin", tags=["admin-catalog"])
 
 
 def _serialize_product_admin(product) -> dict[str, Any]:
+    assets = getattr(product, "admin_media", [])
     base = {
         "id": str(product.id),
         "name": product.name,
@@ -66,7 +75,7 @@ def _serialize_product_admin(product) -> dict[str, Any]:
             }
             for v in sorted(product.variants, key=lambda x: x.sort_order)
         ],
-        "media": [],
+        "media": [_serialize_asset(a) for a in assets],
         "created_at": product.created_at.isoformat() if product.created_at else None,
         "updated_at": product.updated_at.isoformat() if product.updated_at else None,
     }
@@ -431,3 +440,218 @@ async def update_variant(
         "is_active": variant.is_active,
         "sort_order": variant.sort_order,
     }
+
+
+# --- Localizations -----------------------------------------------------------
+#
+# Display-string translations (en/fr/ar) for products and categories. Mutating
+# routes require PRODUCTS_UPDATE; listing requires PRODUCTS_READ. Payloads are
+# extra=forbid so protected fields cannot be smuggled in. Unsupported locales
+# are rejected by FastAPI's path pattern (422) before any DB work happens.
+
+
+def _serialize_localization(localization) -> dict[str, Any]:
+    return {
+        "id": str(localization.id),
+        "locale": localization.locale,
+        "name": localization.name,
+        "description": localization.description,
+    }
+
+
+@router.put("/products/{product_id}/localizations/{locale}", response_model=LocalizationResponse)
+async def upsert_product_localization(
+    product_id: UUID,
+    locale: Annotated[str, Path(pattern=f"^({'|'.join(LOCALES)})$")],
+    payload: ProductLocalizationUpsert,
+    request: Request,
+    user: Annotated[User, Depends(require_permission(Permission.PRODUCTS_UPDATE))],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> LocalizationResponse:
+    product = await catalog_service.get_product(db, product_id)
+    localization = (
+        await db.execute(
+            select(ProductLocalization).where(
+                ProductLocalization.product_id == product.id, ProductLocalization.locale == locale
+            )
+        )
+    ).scalar_one_or_none()
+    if localization is None:
+        localization = ProductLocalization(product_id=product.id, locale=locale)
+        db.add(localization)
+    localization.name = payload.name
+    localization.description = payload.description
+    await db.flush()
+    request_id, ip_address, user_agent = _get_request_context(request)
+    await record_event(
+        db,
+        action=AuditAction.PRODUCT_UPDATED,
+        result=AuditResult.SUCCESS,
+        actor_user_id=user.id,
+        resource_type="product",
+        resource_id=str(product.id),
+        request_id=request_id,
+        ip_address=ip_address,
+        user_agent=user_agent,
+        metadata={"fields": ["localizations"], "locale": locale},
+    )
+    await db.commit()
+    return LocalizationResponse(
+        id=localization.id, locale=localization.locale, name=localization.name, description=localization.description
+    )
+
+
+@router.get("/products/{product_id}/localizations", response_model=list[LocalizationResponse])
+async def list_product_localizations(
+    product_id: UUID,
+    _user: Annotated[User, Depends(require_permission(Permission.PRODUCTS_READ))],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> list[LocalizationResponse]:
+    product = await catalog_service.get_product(db, product_id)
+    rows = (
+        (
+            await db.execute(
+                select(ProductLocalization)
+                .where(ProductLocalization.product_id == product.id)
+                .order_by(ProductLocalization.locale)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return [LocalizationResponse(id=r.id, locale=r.locale, name=r.name, description=r.description) for r in rows]
+
+
+@router.delete("/products/{product_id}/localizations/{locale}", status_code=204)
+async def delete_product_localization(
+    product_id: UUID,
+    locale: Annotated[str, Path(pattern=f"^({'|'.join(LOCALES)})$")],
+    request: Request,
+    user: Annotated[User, Depends(require_permission(Permission.PRODUCTS_UPDATE))],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> None:
+    product = await catalog_service.get_product(db, product_id)
+    localization = (
+        await db.execute(
+            select(ProductLocalization).where(
+                ProductLocalization.product_id == product.id, ProductLocalization.locale == locale
+            )
+        )
+    ).scalar_one_or_none()
+    if localization is None:
+        raise NotFoundError("Localization not found")
+    await db.delete(localization)
+    request_id, ip_address, user_agent = _get_request_context(request)
+    await record_event(
+        db,
+        action=AuditAction.PRODUCT_UPDATED,
+        result=AuditResult.SUCCESS,
+        actor_user_id=user.id,
+        resource_type="product",
+        resource_id=str(product.id),
+        request_id=request_id,
+        ip_address=ip_address,
+        user_agent=user_agent,
+        metadata={"fields": ["localizations"], "locale": locale, "deleted": True},
+    )
+    await db.commit()
+    return None
+
+
+@router.put("/categories/{category_id}/localizations/{locale}", response_model=LocalizationResponse)
+async def upsert_category_localization(
+    category_id: UUID,
+    locale: Annotated[str, Path(pattern=f"^({'|'.join(LOCALES)})$")],
+    payload: CategoryLocalizationUpsert,
+    request: Request,
+    user: Annotated[User, Depends(require_permission(Permission.PRODUCTS_UPDATE))],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> LocalizationResponse:
+    category = await catalog_service.get_category(db, category_id)
+    localization = (
+        await db.execute(
+            select(CategoryLocalization).where(
+                CategoryLocalization.category_id == category.id, CategoryLocalization.locale == locale
+            )
+        )
+    ).scalar_one_or_none()
+    if localization is None:
+        localization = CategoryLocalization(category_id=category.id, locale=locale)
+        db.add(localization)
+    localization.name = payload.name
+    localization.description = payload.description
+    await db.flush()
+    request_id, ip_address, user_agent = _get_request_context(request)
+    await record_event(
+        db,
+        action=AuditAction.CATEGORY_UPDATED,
+        result=AuditResult.SUCCESS,
+        actor_user_id=user.id,
+        resource_type="category",
+        resource_id=str(category.id),
+        request_id=request_id,
+        ip_address=ip_address,
+        user_agent=user_agent,
+        metadata={"fields": ["localizations"], "locale": locale},
+    )
+    await db.commit()
+    return LocalizationResponse(
+        id=localization.id, locale=localization.locale, name=localization.name, description=localization.description
+    )
+
+
+@router.get("/categories/{category_id}/localizations", response_model=list[LocalizationResponse])
+async def list_category_localizations(
+    category_id: UUID,
+    _user: Annotated[User, Depends(require_permission(Permission.PRODUCTS_READ))],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> list[LocalizationResponse]:
+    category = await catalog_service.get_category(db, category_id)
+    rows = (
+        (
+            await db.execute(
+                select(CategoryLocalization)
+                .where(CategoryLocalization.category_id == category.id)
+                .order_by(CategoryLocalization.locale)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return [LocalizationResponse(id=r.id, locale=r.locale, name=r.name, description=r.description) for r in rows]
+
+
+@router.delete("/categories/{category_id}/localizations/{locale}", status_code=204)
+async def delete_category_localization(
+    category_id: UUID,
+    locale: Annotated[str, Path(pattern=f"^({'|'.join(LOCALES)})$")],
+    request: Request,
+    user: Annotated[User, Depends(require_permission(Permission.PRODUCTS_UPDATE))],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> None:
+    category = await catalog_service.get_category(db, category_id)
+    localization = (
+        await db.execute(
+            select(CategoryLocalization).where(
+                CategoryLocalization.category_id == category.id, CategoryLocalization.locale == locale
+            )
+        )
+    ).scalar_one_or_none()
+    if localization is None:
+        raise NotFoundError("Localization not found")
+    await db.delete(localization)
+    request_id, ip_address, user_agent = _get_request_context(request)
+    await record_event(
+        db,
+        action=AuditAction.CATEGORY_UPDATED,
+        result=AuditResult.SUCCESS,
+        actor_user_id=user.id,
+        resource_type="category",
+        resource_id=str(category.id),
+        request_id=request_id,
+        ip_address=ip_address,
+        user_agent=user_agent,
+        metadata={"fields": ["localizations"], "locale": locale, "deleted": True},
+    )
+    await db.commit()
+    return None

@@ -40,8 +40,6 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
             Permission.ORDERS_CREATE,
             Permission.ORDERS_UPDATE,
             Permission.ORDERS_CANCEL,
-            Permission.PAYMENTS_READ,
-            Permission.PAYMENTS_REVIEW,
             Permission.PRODUCTION_READ,
             Permission.PRODUCTION_MANAGE,
             Permission.QUALITY_READ,
@@ -95,8 +93,6 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
     ),
     Role.ACCOUNTING: frozenset(
         {
-            Permission.PAYMENTS_READ,
-            Permission.PAYMENTS_REVIEW,
             Permission.FINANCE_READ,
             Permission.FINANCE_MANAGE,
             Permission.ORDERS_READ,
@@ -129,7 +125,6 @@ RESOURCE_OWNERSHIP_REQUIRED: frozenset[Permission] = frozenset(
         Permission.ORDERS_CANCEL,
         Permission.QUOTES_READ,
         Permission.QUOTES_APPROVE,
-        Permission.PAYMENTS_SUBMIT,
         Permission.CUSTOMERS_READ,
         Permission.CUSTOMERS_UPDATE,
         Permission.CUSTOM_REQUESTS_READ,

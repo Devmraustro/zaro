@@ -35,6 +35,12 @@ class CustomRequestSubmit(BaseModel):
     budget_min_minor: int | None = Field(default=None, ge=0, le=MAX_AMOUNT_MINOR)
     budget_max_minor: int | None = Field(default=None, ge=0, le=MAX_AMOUNT_MINOR)
 
+    # Delivery-location snapshot (validated against the reference tables in
+    # the service layer; a ``wilaya`` query param is a 2-digit Algerian code).
+    wilaya: str | None = Field(default=None, pattern=r"^\d{2}$")
+    commune: str | None = Field(default=None, max_length=100)
+    address: str | None = Field(default=None, max_length=1000)
+
 
 class CustomRequestPublicResponse(BaseModel):
     """What a customer sees about their own request."""

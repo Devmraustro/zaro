@@ -99,8 +99,23 @@ async def pg_session_factory():
     try:
         yield async_sessionmaker(engine, expire_on_commit=False)
     finally:
+        # Use TRUNCATE CASCADE for proper cleanup with FK constraints
         async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.drop_all)
+            # Get all table names in dependency order (children first)
+            tables_result = await conn.execute(
+                text("""
+                SELECT tablename FROM pg_tables
+                WHERE schemaname = 'public'
+                ORDER BY tablename
+            """)
+            )
+            tables = [row[0] for row in tables_result]
+            if tables:
+                # Disable FK checks temporarily and truncate
+                await conn.execute(text("SET session_replication_role = 'replica'"))
+                for table in tables:
+                    await conn.execute(text(f'TRUNCATE TABLE "{table}" CASCADE'))
+                await conn.execute(text("SET session_replication_role = 'origin'"))
         await engine.dispose()
 
 
@@ -144,7 +159,14 @@ async def _create_qc_ready_po(maker, *, on_hand="100", qty="10"):
     """Stock a material, build a CONFIRMED order and a PO in IN_PRODUCTION with
     an assigned worker. Returns (po_id, order_id, material_id, worker_id)."""
     async with maker() as s:
-        mat = Material(id=uuid4(), code="STEEL-BEAM", name="Steel Beam", category="steel", unit="kg", is_active=True)
+        mat = Material(
+            id=uuid4(),
+            code=f"STEEL-BEAM-{uuid4().hex[:8]}",
+            name="Steel Beam",
+            category="steel",
+            unit="kg",
+            is_active=True,
+        )
         s.add(mat)
         await s.flush()
         await inventory_service.purchase(s, material_id=mat.id, quantity=Decimal(on_hand), idempotency_key=uuid4())

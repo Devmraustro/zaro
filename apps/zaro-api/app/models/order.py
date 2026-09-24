@@ -2,7 +2,7 @@
 
 An order is a **snapshot** of the accepted quote's commercial terms. Prices
 are never recalculated from live product data. ``deposit_required_minor`` is
-the authoritative amount every deposit payment must match exactly.
+the authoritative deposit amount for financial terms.
 """
 
 from datetime import datetime
@@ -67,6 +67,22 @@ class Order(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     deposit_required_minor: Mapped[int] = mapped_column(BigInteger, nullable=False)
     deposit_paid_minor: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     balance_due_minor: Mapped[int] = mapped_column(BigInteger, nullable=False)
+
+    # Delivery address snapshot: immutable at order creation time.
+    # Independent from customer profile — historical orders retain original
+    # delivery information even if the customer later changes their address.
+    delivery_wilaya: Mapped[str | None] = mapped_column(
+        String(10),
+        nullable=True,
+    )
+    delivery_commune: Mapped[str | None] = mapped_column(
+        String(20),
+        nullable=True,
+    )
+    delivery_address: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
 
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 

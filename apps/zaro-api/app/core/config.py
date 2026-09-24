@@ -78,6 +78,11 @@ class Settings(BaseSettings):
     s3_secret_key: str | None = None
     s3_region: str = "us-east-1"
 
+    # --- Telegram staff alerts ----------------------------------------------
+    telegram_bot_token: str = ""
+    telegram_chat_id: str = ""
+    telegram_alert_timeout_seconds: float = 10.0
+
     # --- Rate Limiting -----------------------------------------------------
     rate_limit_enabled: bool = True
     rate_limit_requests: int = 120
@@ -171,9 +176,7 @@ class Settings(BaseSettings):
             errors.append("access_token_expire_minutes must not exceed 60 in production")
         if "*" in self.allowed_hosts:
             errors.append("allowed_hosts must not contain wildcards in production")
-        if self.storage_backend == "s3" and not (
-            self.s3_bucket and self.s3_access_key and self.s3_secret_key
-        ):
+        if self.storage_backend == "s3" and not (self.s3_bucket and self.s3_access_key and self.s3_secret_key):
             errors.append("s3 storage backend requires s3_bucket, s3_access_key and s3_secret_key")
         if errors:
             raise ValueError("Insecure production configuration: " + "; ".join(errors))

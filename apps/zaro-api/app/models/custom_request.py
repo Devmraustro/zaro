@@ -26,6 +26,11 @@ class CustomRequest(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     customer_email: Mapped[str | None] = mapped_column(String(320), nullable=True)
     customer_phone: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
+    # Delivery-location snapshot captured at submission time (migration 0009).
+    wilaya: Mapped[str | None] = mapped_column(String(60), nullable=True, index=True)
+    commune: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    address: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     product_type: Mapped[str] = mapped_column(String(50), nullable=False)  # coffee_table, dining_table...
     description: Mapped[str] = mapped_column(Text, nullable=False)
     desired_dimensions: Mapped[str | None] = mapped_column(Text, nullable=True)

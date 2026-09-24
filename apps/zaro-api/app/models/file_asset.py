@@ -13,7 +13,7 @@ class FileAsset(Base, UUIDPrimaryKeyMixin):
     """Generic stored-file record.
 
     One architecture for every upload purpose (custom-request inspiration,
-    product media, future payment proofs). Access is always mediated:
+    product media). Access is always mediated:
 
     - private assets are served only through short-lived signed URLs after
       an ownership/permission check;

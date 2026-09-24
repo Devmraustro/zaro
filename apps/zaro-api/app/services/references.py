@@ -6,8 +6,7 @@ Server-controlled identifiers:
 - variant SKUs follow ``{product_code}-{VNN}``;
 - custom-request references follow ``CR-{YYYY}-{NNNN}``;
 - quote numbers follow ``ZQ-{YYYY}-{NNNNNN}``;
-- order numbers follow ``ZO-{YYYY}-{NNNNNN}``;
-- payment references follow ``ZPAY-{YYYY}-{NNNNNN}``.
+- order numbers follow ``ZO-{YYYY}-{NNNNNN}``.
 
 Sequential codes are derived from existing rows inside the caller's
 transaction. This is safe under normal admin traffic; :func:`run_with_unique_retry`
@@ -32,7 +31,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.exceptions import ConflictError
 from app.models.custom_request import CustomRequest
 from app.models.order import Order
-from app.models.payment import Payment
 from app.models.product import Product
 from app.models.production import ProductionOrder
 from app.models.quote import Quote
@@ -113,12 +111,6 @@ async def next_order_number(db: AsyncSession) -> str:
     """Generate ZO-YYYY-NNNNN for the current year."""
     year = datetime.now(UTC).year
     return await _next_year_reference(db, Order, Order.order_number, f"ZO-{year}-")
-
-
-async def next_payment_reference(db: AsyncSession) -> str:
-    """Generate ZPAY-YYYY-NNNNN for the current year."""
-    year = datetime.now(UTC).year
-    return await _next_year_reference(db, Payment, Payment.payment_reference, f"ZPAY-{year}-")
 
 
 async def next_production_number(db: AsyncSession) -> str:

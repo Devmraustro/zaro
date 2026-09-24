@@ -99,12 +99,12 @@ async def get_lines(db: AsyncSession, quote_id: uuid.UUID) -> list[QuoteLine]:
     return list((await db.execute(stmt)).scalars().all())
 
 
-async def get_default_deposit_percentage(db: AsyncSession) -> int:
-    """Read the configured default deposit policy."""
-    from app.services.payments_service import get_configuration
+DEFAULT_DEPOSIT_PERCENTAGE = 40
 
-    config = await get_configuration(db)
-    return config.default_deposit_percentage
+
+def get_default_deposit_percentage() -> int:
+    """Return the default deposit percentage."""
+    return DEFAULT_DEPOSIT_PERCENTAGE
 
 
 def compute_totals(
@@ -136,13 +136,13 @@ def compute_totals(
         raise ValidationFailedError("discount cannot exceed the subtotal")
     delivery_fee = Money(delivery_fee_minor, Currency.DZD)
     total = subtotal - discount + delivery_fee
-    if total == Money.zero(Currency.DZD):
+    if total == Money.zero(Currency.DZD) and deposit_percentage != 0:
         raise ValidationFailedError("quote total must be greater than zero")
     deposit_amount = total.percentage(deposit_percentage)
-    if deposit_amount == Money.zero(Currency.DZD):
-        # A deposit of 0 would produce an unpayable order: payments require a
-        # positive amount (ck_payments_amount_positive), so the order would
-        # be stuck PENDING_DEPOSIT forever with no claim it can ever open.
+    if deposit_amount == Money.zero(Currency.DZD) and deposit_percentage != 0:
+        # A deposit of 0 would produce an order with zero deposit required,
+        # which is valid for net-30 or full-payment-later terms.
+        # However, a zero deposit amount with non-zero percentage is rejected.
         raise ValidationFailedError("deposit_percentage must produce a positive deposit amount for this total")
     balance = total - deposit_amount  # percentage() guarantees deposit <= total
 
@@ -182,7 +182,7 @@ async def create_quote(
         if customer is None:
             raise NotFoundError("Customer not found")
 
-    pct = deposit_percentage if deposit_percentage is not None else await get_default_deposit_percentage(db)
+    pct = deposit_percentage if deposit_percentage is not None else get_default_deposit_percentage()
     totals, line_totals = compute_totals(
         lines,
         discount_minor=discount_minor,

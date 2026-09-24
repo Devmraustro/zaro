@@ -217,12 +217,21 @@ async def accept_quote(
     quote_id: UUID,
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
+    delivery_wilaya: str | None = None,
+    delivery_commune: str | None = None,
+    delivery_address: str | None = None,
     _payload: QuoteAction | None = None,
 ) -> dict[str, Any]:
     quote, ctx = await _customer_decision(request, quote_id, user, db, QuoteStatus.ACCEPTED)
 
     # Server-side conversion: ACCEPTED -> DEPOSIT_REQUIRED + order snapshot.
-    order = await orders_service.create_from_quote(db, quote)
+    order = await orders_service.create_from_quote(
+        db,
+        quote,
+        delivery_wilaya=delivery_wilaya,
+        delivery_commune=delivery_commune,
+        delivery_address=delivery_address,
+    )
 
     request_id_ctx, ip_address, user_agent = _get_request_context(request)
     await record_event(
@@ -258,6 +267,9 @@ async def accept_quote(
             "total_minor": order.total_minor,
             "deposit_required_minor": order.deposit_required_minor,
             "currency": order.currency,
+            "delivery_wilaya": order.delivery_wilaya,
+            "delivery_commune": order.delivery_commune,
+            "delivery_address": order.delivery_address,
         },
     )
     await db.commit()

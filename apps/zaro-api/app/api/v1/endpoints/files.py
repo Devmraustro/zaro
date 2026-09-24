@@ -28,6 +28,7 @@ from app.models.customer import Customer
 from app.models.enums import FilePurpose, FileVisibility, Permission
 from app.models.file_asset import FileAsset
 from app.models.user import User
+from app.schemas.files import ProductMediaUpdate
 from app.services import catalog_service, custom_requests_service
 from app.services.audit import record_event
 from app.services.file_storage import (
@@ -184,23 +185,8 @@ async def _authorize_private_access(db: AsyncSession, asset: FileAsset, user: Us
     from app.core.rbac import has_permission
     from app.models.customer import Customer
 
-    # Payment proofs are FINANCIAL documents: staff access requires the
-    # payments.read permission (owner/admin/accounting). Sales, workers and
-    # content editors must NOT see them even though they may read other
-    # private assets. The owning customer may always view their own proof.
-    if asset.purpose == FilePurpose.PAYMENT_PROOF:
-        if user.role != "customer" and has_permission(user.role, Permission.PAYMENTS_READ):
-            return
-        if user.role == "customer":
-            linked = (await db.execute(select(Customer).where(Customer.user_id == user.id))).scalar_one_or_none()
-            by_email = (
-                await db.execute(select(Customer).where(Customer.email == user.email.lower()))
-            ).scalar_one_or_none()
-            customer = linked or by_email
-            if customer is not None and asset.customer_id == customer.id:
-                return
-        raise ForbiddenError("You do not have access to this file")
-
+    # Custom request inspiration files: staff with CUSTOM_REQUESTS_READ can access.
+    # The owning customer can always access their own files.
     if user.role != "customer" and has_permission(user.role, Permission.CUSTOM_REQUESTS_READ):
         return
     if user.role == "customer":
@@ -325,3 +311,77 @@ async def list_product_media(
     )
     assets = list((await db.execute(stmt)).scalars().all())
     return [_serialize_asset(a) for a in assets]
+
+
+async def _load_product_media(db: AsyncSession, product_id: UUID, asset_id: UUID) -> FileAsset:
+    """Load a product-media asset, enforcing same-product ownership.
+
+    Missing asset, wrong product, or non-product-media purpose all surface as
+    404 so callers get no cross-tenant signal.
+    """
+    await catalog_service.get_product(db, product_id)  # 404 for unknown product
+    asset = await db.get(FileAsset, asset_id)
+    if asset is None or asset.product_id != product_id or asset.purpose != FilePurpose.PRODUCT_MEDIA:
+        raise NotFoundError("File not found")
+    return asset
+
+
+@admin_media_router.patch("/{product_id}/media/{asset_id}")
+async def update_product_media(
+    product_id: UUID,
+    asset_id: UUID,
+    payload: ProductMediaUpdate,
+    request: Request,
+    _user: Annotated[User, Depends(require_permission(Permission.PRODUCTS_UPDATE))],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict[str, Any]:
+    asset = await _load_product_media(db, product_id, asset_id)
+    changes = payload.model_dump(exclude_unset=True)
+    for field_name, value in changes.items():
+        setattr(asset, field_name, value)
+    request_id, ip_address, user_agent = _get_request_context(request)
+    await record_event(
+        db,
+        action=AuditAction.FILE_UPDATED,
+        result=AuditResult.SUCCESS,
+        actor_user_id=_user.id,
+        resource_type="file_asset",
+        resource_id=str(asset.id),
+        request_id=request_id,
+        ip_address=ip_address,
+        user_agent=user_agent,
+        metadata={"product_id": str(product_id), "fields": sorted(changes.keys())},
+    )
+    await db.commit()
+    return _serialize_asset(asset)
+
+
+@admin_media_router.delete("/{product_id}/media/{asset_id}", status_code=204)
+async def delete_product_media(
+    product_id: UUID,
+    asset_id: UUID,
+    request: Request,
+    user: Annotated[User, Depends(require_permission(Permission.PRODUCTS_UPDATE))],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> Response:
+    asset = await _load_product_media(db, product_id, asset_id)
+    backend = get_storage_backend(settings)
+    await backend.delete(asset.storage_key)
+    await db.delete(asset)
+    await db.flush()
+    request_id, ip_address, user_agent = _get_request_context(request)
+    await record_event(
+        db,
+        action=AuditAction.FILE_DELETED,
+        result=AuditResult.SUCCESS,
+        actor_user_id=user.id,
+        resource_type="file_asset",
+        resource_id=str(asset.id),
+        request_id=request_id,
+        ip_address=ip_address,
+        user_agent=user_agent,
+        metadata={"product_id": str(product_id)},
+    )
+    await db.commit()
+    return Response(status_code=204)

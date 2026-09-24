@@ -22,6 +22,7 @@
   --color-zaro-bronze: #a87952;
   --color-zaro-bronze-light: #c49a71;
   --color-zaro-bronze-dark: #84583a;
+  --color-zaro-muted: #8a867c;
 
   /* Shadow system */
   --shadow-lift: 0 1px 2px rgb(11 11 11 / 0.06), 0 8px 24px -12px rgb(11 11 11 / 0.18);
@@ -91,6 +92,11 @@ body {
 html {
   scrollbar-width: thin;
   scrollbar-color: var(--color-zaro-sand) transparent;
+}
+
+/* Anchor targets clear the fixed header. */
+section[id] {
+  scroll-margin-top: 6rem;
 }
 
 /* =========================================================

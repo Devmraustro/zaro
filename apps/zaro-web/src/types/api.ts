@@ -165,3 +165,79 @@ export interface AdminCustomRequest extends CustomRequestPublic {
   source: string;
   assigned_to: string | null;
 }
+
+export interface AdminMedia {
+  id: string;
+  url_path: string;
+  media_kind: string;
+  alt_text: string | null;
+  sort_order: number;
+  original_filename: string | null;
+  content_type: string;
+  size_bytes: number;
+  created_at: string;
+}
+
+export interface AdminProductVariant {
+  id: string;
+  sku: string;
+  label: string;
+  attributes: Record<string, string> | null;
+  price_override_minor: number | null;
+  is_active: boolean;
+  sort_order: number;
+}
+
+export interface AdminProduct extends Product<AdminProductVariant> {
+  status: ProductStatus;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AdminMedia {
+  id: string;
+  url_path: string;
+  media_kind: string;
+  alt_text: string | null;
+  sort_order: number;
+  created_at: string;
+}
+
+export interface AdminMediaList {
+  items: AdminMedia[];
+  total: number;
+}
+
+export interface DashboardSummary {
+  custom_requests?: {
+    total: number;
+    by_status: Record<string, number>;
+    pending: number;
+    this_week: number;
+  };
+  recent_requests?: Array<{
+    id: string;
+    reference: string;
+    status: string;
+    product_type: string;
+    customer_name: string;
+    wilaya: string | null;
+    created_at: string | null;
+  }>;
+  customers_total?: number;
+  products?: {
+    total: number;
+    active: number;
+  };
+}
+
+export interface TrackResult {
+  reference: string;
+  product_type: string;
+  description: string;
+  status: string;
+  wilaya: string | null;
+  commune: string | null;
+  created_at: string;
+  updated_at: string;
+}

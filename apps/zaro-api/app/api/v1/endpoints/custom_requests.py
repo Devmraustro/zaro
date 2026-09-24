@@ -18,6 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import _get_request_context, get_current_user, require_permission
+from app.api.v1.endpoints.files import _serialize_asset
 from app.core.config import Settings, get_settings
 from app.core.exceptions import ForbiddenError, RateLimitError, ValidationFailedError
 from app.core.rate_limit import get_client_ip, get_rate_limiter
@@ -25,6 +26,7 @@ from app.db.session import get_db
 from app.models.audit_enums import AuditAction, AuditResult
 from app.models.customer import Customer
 from app.models.enums import CustomRequestStatus, Permission
+from app.models.file_asset import FileAsset
 from app.models.user import User
 from app.schemas.custom_requests import (
     CustomRequestStatusUpdate,
@@ -51,6 +53,9 @@ def _serialize_public(request_obj) -> dict[str, Any]:
         "budget_min_minor": request_obj.budget_min_minor,
         "budget_max_minor": request_obj.budget_max_minor,
         "currency": request_obj.currency,
+        "wilaya": request_obj.wilaya,
+        "commune": request_obj.commune,
+        "address": request_obj.address,
         "status": str(request_obj.status),
         "created_at": request_obj.created_at.isoformat() if request_obj.created_at else None,
         "updated_at": request_obj.updated_at.isoformat() if request_obj.updated_at else None,
@@ -110,6 +115,9 @@ async def submit_custom_request(
         quantity=payload.quantity,
         budget_min_minor=payload.budget_min_minor,
         budget_max_minor=payload.budget_max_minor,
+        wilaya=payload.wilaya,
+        commune=payload.commune,
+        address=payload.address,
         source="website",
     )
     request_id, ctx_ip, user_agent = _get_request_context(request)
@@ -237,6 +245,44 @@ async def change_request_status(
     return _serialize_admin(custom_request)
 
 
+@admin_router.post("/{request_id}/assign")
+async def assign_request(
+    request_id: UUID,
+    staff_user_id: str,
+    request: Request,
+    user: Annotated[User, Depends(require_permission(Permission.CUSTOM_REQUESTS_UPDATE))],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict[str, Any]:
+    from app.models.user import User as UserModel
+
+    # Validate staff user exists
+    staff_user = await db.get(UserModel, UUID(staff_user_id))
+    if staff_user is None:
+        raise ForbiddenError("Staff member not found")
+    if staff_user.role != "staff":
+        raise ForbiddenError("User is not a staff member")
+
+    custom_request = await custom_requests_service.get_request(db, request_id)
+    custom_request.assigned_to = staff_user_id
+    await db.flush()
+
+    request_id_ctx, ip_address, user_agent = _get_request_context(request)
+    await record_event(
+        db,
+        action=AuditAction.CUSTOM_REQUEST_ASSIGNED,
+        result=AuditResult.SUCCESS,
+        actor_user_id=user.id,
+        resource_type="custom_request",
+        resource_id=str(custom_request.id),
+        request_id=request_id_ctx,
+        ip_address=ip_address,
+        user_agent=user_agent,
+        metadata={"assigned_to": staff_user_id, "assigned_by": user.id},
+    )
+    await db.commit()
+    return _serialize_admin(custom_request)
+
+
 @admin_router.get("/{request_id}")
 async def get_custom_request_admin(
     request_id: UUID,
@@ -245,3 +291,19 @@ async def get_custom_request_admin(
 ) -> dict[str, Any]:
     custom_request = await custom_requests_service.get_request(db, request_id)
     return _serialize_admin(custom_request)
+
+
+@admin_router.get("/{request_id}/files")
+async def list_request_files(
+    request_id: UUID,
+    _user: Annotated[User, Depends(require_permission(Permission.CUSTOM_REQUESTS_UPDATE))],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict[str, Any]:
+    await custom_requests_service.get_request(db, request_id)
+    stmt = (
+        select(FileAsset)
+        .where(FileAsset.custom_request_id == request_id)
+        .order_by(FileAsset.sort_order, FileAsset.created_at)
+    )
+    assets = list((await db.execute(stmt)).scalars().all())
+    return {"items": [_serialize_asset(a) for a in assets], "total": len(assets)}

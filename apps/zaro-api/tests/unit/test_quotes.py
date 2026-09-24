@@ -82,16 +82,17 @@ class TestComputeTotals:
         with pytest.raises(ValidationFailedError):
             compute_totals([_line()], discount_minor=0, delivery_fee_minor=0, deposit_percentage=-1)
 
-    def test_zero_percent_deposit_rejected(self):
-        # 0% is already unreachable via API/config (schema ge=1), and a zero
-        # deposit would produce an unpayable order: reject at the pricing path.
-        with pytest.raises(ValidationFailedError):
-            compute_totals([_line()], discount_minor=0, delivery_fee_minor=0, deposit_percentage=0)
+    def test_zero_percent_deposit_allowed(self):
+        # 0% deposit is now allowed per I-3A.1 Decision 6.
+        # A zero-total quote with 0% deposit is valid (no deposit required).
+        totals, _ = compute_totals([_line()], discount_minor=0, delivery_fee_minor=0, deposit_percentage=0)
+        assert totals["deposit_amount_minor"] == 0
+        assert totals["balance_amount_minor"] == totals["total_minor"]
 
     def test_rounding_zero_deposit_rejected(self):
-        # 40% of a 1-minor-unit total rounds to 0. Such a quote cannot ever be
-        # paid (payments require amount_minor > 0), so it must be rejected
-        # instead of later wedging the order as permanently PENDING_DEPOSIT.
+        # 40% of a 1-minor-unit total rounds to 0. Such a quote cannot ever have
+        # a positive deposit amount, so it must be rejected instead of later
+        # wedging the order as permanently PENDING_DEPOSIT.
         line = QuoteLineInput.build(description="x", quantity="0.5", unit_label=None, unit_price_minor=2)
         with pytest.raises(ValidationFailedError):
             compute_totals([line], discount_minor=0, delivery_fee_minor=0, deposit_percentage=40)

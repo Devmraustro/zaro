@@ -20,7 +20,7 @@ from uuid import UUID
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import InvalidStateTransition, NotFoundError
+from app.core.exceptions import InvalidStateTransition, NotFoundError, ValidationFailedError
 from app.models.custom_request import CustomRequest
 from app.models.customer import Customer
 from app.models.enums import CUSTOM_REQUEST_TRANSITIONS, CustomRequestStatus
@@ -49,13 +49,46 @@ async def submit_request(
     quantity: int,
     budget_min_minor: int | None,
     budget_max_minor: int | None,
+    wilaya: str | None = None,
+    commune: str | None = None,
+    address: str | None = None,
     source: str = "website",
     actor_user_id: UUID | None = None,
 ) -> CustomRequest:
     """Create a customer record (or reuse a match) and the request itself."""
+    import app.models.commune as _cm
+
+    # Location security validation imports (use module aliases to avoid parameter name conflicts)
+    import app.models.wilaya as _wm
     from app.services.customers_service import find_matching_customer
 
+    Wilaya = _wm.Wilaya
+    Commune = _cm.Commune
+
     customer: Customer | None = await find_matching_customer(db, email=email, phone=phone)
+
+    # Location security validation
+    if wilaya is not None:
+        # Verify the wilaya code exists in the reference table
+        wilaya_obj = (await db.execute(select(Wilaya).where(Wilaya.code == wilaya))).scalar_one_or_none()
+        if wilaya_obj is None:
+            raise ValidationFailedError(
+                f"Invalid wilaya code: {wilaya}",
+                details={"wilaya": wilaya, "allowed": "codes from wilayas reference table"},
+            )
+        # If a commune is provided, verify it belongs to this wilaya
+        if commune is not None:
+            commune_obj = (await db.execute(select(Commune).where(Commune.code == commune))).scalar_one_or_none()
+            if commune_obj is None or commune_obj.wilaya_id != wilaya_obj.id:
+                raise ValidationFailedError(
+                    f"Commune does not belong to wilaya {wilaya}",
+                    details={"commune": commune, "wilaya": wilaya},
+                )
+    elif commune is not None:
+        raise ValidationFailedError(
+            "Commune requires a wilaya",
+            details={"commune": commune, "wilaya": None},
+        )
     if customer is None:
         customer = Customer(
             full_name=full_name,
@@ -88,6 +121,9 @@ async def submit_request(
             quantity=quantity,
             budget_min_minor=budget_min_minor,
             budget_max_minor=budget_max_minor,
+            wilaya=wilaya,
+            commune=commune,
+            address=address,
             source=source,
         )
         db.add(candidate)

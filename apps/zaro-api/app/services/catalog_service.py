@@ -17,7 +17,7 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import ColumnElement, func, select
+from sqlalchemy import ColumnElement, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -25,6 +25,7 @@ from app.core.exceptions import ConflictError, NotFoundError, ValidationFailedEr
 from app.models.category import Category
 from app.models.enums import FilePurpose, FileVisibility, ProductStatus
 from app.models.file_asset import FileAsset
+from app.models.localization import ProductLocalization
 from app.models.product import Product, ProductVariant
 from app.services.references import build_variant_sku, next_product_code, slugify, unique_slug
 
@@ -133,6 +134,7 @@ async def get_product(db: AsyncSession, product_id: UUID) -> Product:
     product = (await db.execute(stmt)).scalar_one_or_none()
     if product is None:
         raise NotFoundError("Product not found")
+    await _attach_admin_media(db, [product])
     return product
 
 
@@ -142,7 +144,31 @@ async def get_product_by_slug(db: AsyncSession, slug: str) -> Product | None:
         .where(Product.slug == slug, Product.status == ProductStatus.ACTIVE)
         .options(selectinload(Product.variants))
     )
-    return (await db.execute(stmt)).scalar_one_or_none()
+    product = (await db.execute(stmt)).scalar_one_or_none()
+    if product is not None:
+        await _attach_public_media(db, [product])
+    return product
+
+
+async def _attach_public_media(db: AsyncSession, products: list[Product]) -> None:
+    """Attach ``product.public_media`` (PUBLIC product_media rows, ordered)."""
+    if not products:
+        return
+    stmt = (
+        select(FileAsset)
+        .where(
+            FileAsset.product_id.in_([p.id for p in products]),
+            FileAsset.purpose == FilePurpose.PRODUCT_MEDIA,
+            FileAsset.visibility == FileVisibility.PUBLIC,
+        )
+        .order_by(FileAsset.sort_order, FileAsset.created_at)
+    )
+    by_product: dict[UUID, list[FileAsset]] = {}
+    for asset in (await db.execute(stmt)).scalars().all():
+        if asset.product_id is not None:
+            by_product.setdefault(asset.product_id, []).append(asset)
+    for product in products:
+        product.public_media = by_product.get(product.id, [])  # type: ignore[attr-defined]
 
 
 async def update_product(db: AsyncSession, product: Product, changes: dict) -> Product:
@@ -248,6 +274,26 @@ def effective_price_minor(product: Product, variant: ProductVariant) -> int:
     return variant.price_override_minor if variant.price_override_minor is not None else product.selling_price_minor
 
 
+async def _attach_admin_media(db: AsyncSession, products: list[Product]) -> None:
+    """Attach ``product.admin_media`` (all product_media rows, any visibility)."""
+    if not products:
+        return
+    stmt = (
+        select(FileAsset)
+        .where(
+            FileAsset.product_id.in_([p.id for p in products]),
+            FileAsset.purpose == FilePurpose.PRODUCT_MEDIA,
+        )
+        .order_by(FileAsset.sort_order, FileAsset.created_at)
+    )
+    by_product: dict[UUID, list[FileAsset]] = {}
+    for asset in (await db.execute(stmt)).scalars().all():
+        if asset.product_id is not None:  # filtered by query, but keeps types honest
+            by_product.setdefault(asset.product_id, []).append(asset)
+    for product in products:
+        product.admin_media = by_product.get(product.id, [])  # type: ignore[attr-defined]
+
+
 # --- Public listing -----------------------------------------------------------
 
 
@@ -260,6 +306,7 @@ async def list_public_products(
     search: str | None = None,
     featured_only: bool = False,
     sort: str = "newest",
+    lang: str | None = None,
 ) -> tuple[list[Product], int]:
     stmt = select(Product).where(Product.status == ProductStatus.ACTIVE)
     count_stmt = select(func.count()).select_from(Product).where(Product.status == ProductStatus.ACTIVE)
@@ -275,8 +322,17 @@ async def list_public_products(
         from app.services.customers_service import escape_like_literal
 
         pattern = f"%{escape_like_literal(search.strip())}%"
-        stmt = stmt.where(Product.name.ilike(pattern, escape="\\"))
-        count_stmt = count_stmt.where(Product.name.ilike(pattern, escape="\\"))
+        name_match: ColumnElement[bool] = Product.name.ilike(pattern, escape="\\")
+        if lang and lang != "en":
+            # Localized search: match the canonical name OR the requested
+            # locale's translated name. Parameterized; never string-built SQL.
+            localized_ids = select(ProductLocalization.product_id).where(
+                ProductLocalization.locale == lang,
+                ProductLocalization.name.ilike(pattern, escape="\\"),
+            )
+            name_match = or_(Product.name.ilike(pattern, escape="\\"), Product.id.in_(localized_ids))
+        stmt = stmt.where(name_match)
+        count_stmt = count_stmt.where(name_match)
 
     if featured_only:
         stmt = stmt.where(Product.is_featured.is_(True))
@@ -299,23 +355,7 @@ async def list_public_products(
     )
 
     products = list(rows)
-    # Attach public media in one query to avoid N+1.
-    if products:
-        media_stmt = (
-            select(FileAsset)
-            .where(
-                FileAsset.product_id.in_([p.id for p in products]),
-                FileAsset.purpose == FilePurpose.PRODUCT_MEDIA,
-                FileAsset.visibility == FileVisibility.PUBLIC,
-            )
-            .order_by(FileAsset.sort_order, FileAsset.created_at)
-        )
-        media_by_product: dict[UUID, list[FileAsset]] = {}
-        for asset in (await db.execute(media_stmt)).scalars().all():
-            if asset.product_id is not None:  # filtered by query, but keeps types honest
-                media_by_product.setdefault(asset.product_id, []).append(asset)
-        for p in products:
-            p.public_media = media_by_product.get(p.id, [])  # type: ignore[attr-defined]
+    await _attach_public_media(db, products)
     return products, total
 
 
@@ -346,4 +386,5 @@ async def list_admin_products(
         .scalars()
         .all()
     )
+    await _attach_admin_media(db, products)
     return products, total

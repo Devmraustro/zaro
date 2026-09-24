@@ -7,9 +7,7 @@ makes double conversion impossible at the database level.
 Deposit accounting:
 
 - ``deposit_required_minor`` is copied from the accepted quote snapshot;
-- ``deposit_paid_minor`` only ever increases through
-  :func:`apply_confirmed_deposit` (called inside the payment-confirmation
-  transaction);
+- ``deposit_paid_minor`` tracks confirmed deposits against the order;
 - ``balance_due_minor = total - deposit_paid`` at all times (DB-checked).
 """
 
@@ -23,9 +21,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ConflictError, InvalidStateTransition, NotFoundError, ValidationFailedError
 from app.models.customer import Customer
-from app.models.enums import ORDER_TRANSITIONS, OrderStatus, PaymentStatus, QuoteStatus
+from app.models.enums import ORDER_TRANSITIONS, OrderStatus, QuoteStatus
 from app.models.order import Order, OrderLine
-from app.models.payment import Payment
 from app.models.quote import Quote
 
 
@@ -37,12 +34,7 @@ async def get_order(db: AsyncSession, order_id: uuid.UUID) -> Order:
 
 
 async def get_order_for_update(db: AsyncSession, order_id: uuid.UUID) -> Order:
-    """Load and row-lock an order for a mutating transition (cancel).
-
-    Serializes cancellation against concurrent payment confirmation (which
-    locks the same row): the loser observes the settled state and fails
-    cleanly instead of overwriting CONFIRMED with CANCELLED or vice versa.
-    """
+    """Load and row-lock an order for a mutating transition (cancel)."""
     stmt = select(Order).where(Order.id == order_id).with_for_update()
     order = (await db.execute(stmt)).scalar_one_or_none()
     if order is None:
@@ -64,12 +56,22 @@ def validate_transition(current: OrderStatus, target: OrderStatus) -> None:
         )
 
 
-async def create_from_quote(db: AsyncSession, quote: Quote) -> Order:
+async def create_from_quote(
+    db: AsyncSession,
+    quote: Quote,
+    *,
+    delivery_wilaya: str | None = None,
+    delivery_commune: str | None = None,
+    delivery_address: str | None = None,
+) -> Order:
     """Create the order for an accepted quote (idempotent per quote).
 
     Transitions the quote ACCEPTED -> DEPOSIT_REQUIRED within the caller's
     transaction. Raises ConflictError if an order already exists for this
     quote.
+
+    Delivery address snapshot is captured from checkout input and stored
+    immutably on the order, independent of the customer's current profile.
     """
     if QuoteStatus(quote.status) != QuoteStatus.ACCEPTED:
         raise InvalidStateTransition(
@@ -100,11 +102,15 @@ async def create_from_quote(db: AsyncSession, quote: Quote) -> Order:
             discount_minor=quote.discount_minor,
             delivery_fee_minor=quote.delivery_fee_minor,
             total_minor=quote.total_minor,
-            # Authoritative deposit copied from the quote snapshot; payments must
-            # match it exactly.
+            # Authoritative deposit copied from the quote snapshot.
             deposit_required_minor=quote.deposit_amount_minor,
             deposit_paid_minor=0,
             balance_due_minor=quote.total_minor,
+            # Delivery address snapshot: immutable at order creation, independent
+            # of customer profile changes. Validated at creation time.
+            delivery_wilaya=delivery_wilaya,
+            delivery_commune=delivery_commune,
+            delivery_address=delivery_address,
             notes=quote.notes,
         )
         db.add(candidate)
@@ -137,10 +143,10 @@ async def create_from_quote(db: AsyncSession, quote: Quote) -> Order:
 
 
 async def apply_confirmed_deposit(db: AsyncSession, order: Order, amount_minor: int) -> Order:
-    """Account a confirmed deposit payment against the order.
+    """Account a confirmed deposit against the order.
 
-    Must run inside the same transaction as the payment confirmation. The
-    caller is responsible for having row-locked both rows.
+    This is a financial accounting function. It does not require a payment
+    provider or payment row.
     """
     if OrderStatus(order.status) != OrderStatus.PENDING_DEPOSIT:
         raise ConflictError("Order is not awaiting a deposit")
@@ -156,7 +162,6 @@ async def apply_confirmed_deposit(db: AsyncSession, order: Order, amount_minor: 
         order.confirmed_at = datetime.now(UTC)
 
         # The originating quote completes its lifecycle with the order.
-        # Locked: concurrent order cancellation links the same quote row.
         if order.quote_id is not None:
             locked = (
                 await db.execute(select(Quote).where(Quote.id == order.quote_id).with_for_update())
@@ -169,11 +174,35 @@ async def apply_confirmed_deposit(db: AsyncSession, order: Order, amount_minor: 
     return order
 
 
+async def confirm_order_without_deposit(db: AsyncSession, order: Order) -> Order:
+    """Confirm an order without requiring a deposit payment.
+
+    Used when the business agrees to net terms or full payment later.
+    """
+    if OrderStatus(order.status) != OrderStatus.PENDING_DEPOSIT:
+        raise ConflictError("Order is not awaiting a deposit")
+
+    validate_transition(OrderStatus(order.status), OrderStatus.CONFIRMED)
+    order.status = OrderStatus.CONFIRMED
+    order.confirmed_at = datetime.now(UTC)
+
+    # The originating quote completes its lifecycle with the order.
+    if order.quote_id is not None:
+        locked = (
+            await db.execute(select(Quote).where(Quote.id == order.quote_id).with_for_update())
+        ).scalar_one_or_none()
+        if locked is not None and QuoteStatus(locked.status) == QuoteStatus.DEPOSIT_REQUIRED:
+            locked.status = QuoteStatus.CONVERTED
+            db.add(locked)
+    db.add(order)
+    await db.flush()
+    return order
+
+
 async def cancel_order(db: AsyncSession, order: Order, *, reason: str | None = None) -> Order:
     """Cancel an order and unlink its lifecycle.
 
     Callers must pass a row-locked order (see :func:`get_order_for_update`)
-    so cancellation serializes against concurrent payment confirmation.
     """
     current = OrderStatus(order.status)
     validate_transition(current, OrderStatus.CANCELLED)
@@ -186,7 +215,6 @@ async def cancel_order(db: AsyncSession, order: Order, *, reason: str | None = N
 
     # Cancel the originating quote too (accepted/deposit_required are not
     # directly cancellable; this is the documented server-side linkage).
-    # Locked: concurrent payment confirmation links the same quote row.
     if order.quote_id is not None:
         locked = (
             await db.execute(select(Quote).where(Quote.id == order.quote_id).with_for_update())
@@ -200,51 +228,16 @@ async def cancel_order(db: AsyncSession, order: Order, *, reason: str | None = N
 
 async def cancel_order_with_claim(
     db: AsyncSession, order_id: uuid.UUID, *, reason: str | None = None
-) -> tuple[Order, uuid.UUID | None, str]:
-    """Cancel an order and its unresolved deposit claim atomically.
+) -> tuple[Order, None, str]:
+    """Cancel an order and return cancelled claim info (always None for claim since payment is removed).
 
-    Locking protocol (caller's transaction): Payment -> Order -> Quote -- the
-    SAME global order used by ``payments_service.confirm_payment``. The active
-    deposit claim is located with a plain read, row-locked first, and then the
-    order and its linked quote. A concurrent confirm and this cancel therefore
-    serialize on the payment/order rows instead of deadlocking: locking Order
-    before Payment would invert the (Payment, Order) pair and create a
-    PostgreSQL 40P01 cycle.
-
-    Returns ``(order, cancelled_claim_id, old_status)``. ``cancelled_claim_id``
-    is non-None when an unresolved claim existed and was moved to CANCELLED.
+    This maintains API compatibility with the admin endpoint.
     """
-    from app.services import payments_service
-
-    # 1. Locate the active claim (plain read) so it can be locked first.
-    active_claim = await payments_service.find_active_for_order(db, order_id)
-
-    # 2. Row-lock the claim before the order.
-    locked_claim: Payment | None = None
-    if active_claim is not None:
-        locked_claim = (
-            await db.execute(select(Payment).where(Payment.id == active_claim.id).with_for_update())
-        ).scalar_one_or_none()
-
-    # 3. Row-lock the order, then the linked quote (cancel_order does the
-    #    quote hop). Serializes against concurrent payment confirmation.
     order = await get_order_for_update(db, order_id)
     old_status = str(order.status)
     order = await cancel_order(db, order, reason=reason)
-
-    # 4. Cancel the locked claim if it still awaits action (append-only: the
-    #    claim row stays, status moves through the validated state machine).
-    cancelled_claim_id: uuid.UUID | None = None
-    if locked_claim is not None and PaymentStatus(locked_claim.status) in (
-        PaymentStatus.PENDING,
-        PaymentStatus.PROOF_UPLOADED,
-        PaymentStatus.UNDER_REVIEW,
-    ):
-        payments_service.validate_transition(PaymentStatus(locked_claim.status), PaymentStatus.CANCELLED)
-        locked_claim.status = PaymentStatus.CANCELLED
-        db.add(locked_claim)
-        cancelled_claim_id = locked_claim.id
-    return order, cancelled_claim_id, old_status
+    # No payment claim to cancel since payment system is removed
+    return order, None, old_status
 
 
 async def list_for_customer(db: AsyncSession, customer_id: uuid.UUID) -> list[Order]:

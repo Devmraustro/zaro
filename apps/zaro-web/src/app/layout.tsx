@@ -35,21 +35,23 @@ const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://zaro-zaro-web.verce
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
   title: {
-    default: "ZARO — Modern Furniture & Metalwork",
+    default: "ZARO — Handcrafted Furniture & Architectural Metalwork",
     template: "%s · ZARO",
   },
   description:
-    "Handcrafted modern furniture and custom metalwork. Built with precision, designed with intention.",
+    "Premium handcrafted furniture and architectural metalwork. Custom tables, consoles, shelving and structures — drawn like architecture, built by hand, finished to spec.",
   applicationName: "ZARO",
   keywords: [
     "furniture",
-    "modern furniture",
     "custom furniture",
-    "metalwork",
+    "handcrafted furniture",
+    "architectural metalwork",
+    "custom metalwork",
     "bespoke furniture",
-    "handmade furniture",
     "dining chairs",
     "dining tables",
+    "consoles",
+    "shelving",
   ],
   creator: "ZARO Studio",
   robots: { index: true, follow: true },
@@ -58,9 +60,9 @@ export const metadata: Metadata = {
     locale: "en",
     url: "/",
     siteName: "ZARO",
-    title: "ZARO — Modern Furniture & Metalwork",
+    title: "ZARO — Handcrafted Furniture & Architectural Metalwork",
     description:
-      "Handcrafted modern furniture and custom metalwork. Built with precision, designed with intention.",
+      "Premium handcrafted furniture and architectural metalwork. Custom tables, consoles, shelving and structures — drawn like architecture, built by hand.",
   },
 };
 

@@ -59,13 +59,6 @@ class Permission(StrEnum):
     ORDERS_UPDATE = "orders.update"
     ORDERS_CANCEL = "orders.cancel"
 
-    # Payments
-    PAYMENTS_READ = "payments.read"
-    PAYMENTS_SUBMIT = "payments.submit"
-    PAYMENTS_REVIEW = "payments.review"
-    PAYMENTS_CONFIRM = "payments.confirm"
-    PAYMENTS_REJECT = "payments.reject"
-
     # Production
     PRODUCTION_READ = "production.read"
     PRODUCTION_MANAGE = "production.manage"
@@ -211,48 +204,11 @@ ORDER_TRANSITIONS: dict[OrderStatus, frozenset[OrderStatus]] = {
 }
 
 
-class PaymentMethod(StrEnum):
-    CCP = "ccp"
-
-
-class PaymentStatus(StrEnum):
-    PENDING = "pending"
-    PROOF_UPLOADED = "proof_uploaded"
-    UNDER_REVIEW = "under_review"
-    CONFIRMED = "confirmed"
-    REJECTED = "rejected"
-    CANCELLED = "cancelled"
-
-
-PAYMENT_STATUS_TRANSITIONS: dict[PaymentStatus, frozenset[PaymentStatus]] = {
-    PaymentStatus.PENDING: frozenset(
-        {PaymentStatus.PROOF_UPLOADED, PaymentStatus.UNDER_REVIEW, PaymentStatus.CANCELLED}
-    ),
-    # PROOF_UPLOADED -> PROOF_UPLOADED is proof replacement: the customer may
-    # swap the file before submitting for review (each upload is audited).
-    PaymentStatus.PROOF_UPLOADED: frozenset(
-        {PaymentStatus.PROOF_UPLOADED, PaymentStatus.UNDER_REVIEW, PaymentStatus.CANCELLED}
-    ),
-    # UNDER_REVIEW -> CANCELLED exists ONLY for the server-side order-cancellation
-    # linkage (cancelling an order cancels its unresolved claim). No client
-    # operation targets CANCELLED directly.
-    PaymentStatus.UNDER_REVIEW: frozenset({PaymentStatus.CONFIRMED, PaymentStatus.REJECTED, PaymentStatus.CANCELLED}),
-    # CONFIRMED is irreversible by design; corrections go through a separate
-    # reversal workflow in a future phase.
-    PaymentStatus.CONFIRMED: frozenset(),
-    # A rejected claim may be resubmitted with better proof (replacement flow,
-    # same payment record -- no duplicate claims).
-    PaymentStatus.REJECTED: frozenset({PaymentStatus.PROOF_UPLOADED}),
-    PaymentStatus.CANCELLED: frozenset(),
-}
-
-
 class FilePurpose(StrEnum):
     """Why a stored asset exists. Drives authorization and lifecycle rules."""
 
     CUSTOM_REQUEST_INSPIRATION = "custom_request_inspiration"
     PRODUCT_MEDIA = "product_media"
-    PAYMENT_PROOF = "payment_proof"
 
 
 class FileVisibility(StrEnum):

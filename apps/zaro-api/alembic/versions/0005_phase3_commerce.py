@@ -1,4 +1,4 @@
-"""phase 3 commerce: quotes, orders, manual CCP payments
+"""phase 3 commerce: quotes, orders, provider-authoritative payments
 
 Revision ID: 0005
 Revises: 0004
@@ -9,8 +9,9 @@ Financial invariants enforced at the database level:
 - CHECK constraints keep every monetary column non-negative and keep
   total/balance/deposit relationships internally consistent;
 - ``orders.quote_id`` is UNIQUE (one order per accepted quote);
-- partial UNIQUE indexes guarantee at most one active and at most one
-  confirmed deposit payment per order (PostgreSQL; SQLite skips them).
+- partial UNIQUE indexes guarantee at most one active (``pending``) and at
+  most one succeeded payment per order; ``provider`` is NULL only for legacy
+  CCP rows, and new attempt creation refuses provider-less rows.
 """
 
 from collections.abc import Sequence
@@ -39,7 +40,9 @@ def upgrade() -> None:
         sa.Column(
             "custom_request_id",
             sa.Uuid(),
-            sa.ForeignKey("custom_requests.id", ondelete="SET NULL", name="fk_quotes_custom_request_id_custom_requests"),
+            sa.ForeignKey(
+                "custom_requests.id", ondelete="SET NULL", name="fk_quotes_custom_request_id_custom_requests"
+            ),
             nullable=True,
         ),
         sa.Column("status", sa.String(20), nullable=False, server_default="draft"),
@@ -129,7 +132,9 @@ def upgrade() -> None:
         sa.Column(
             "custom_request_id",
             sa.Uuid(),
-            sa.ForeignKey("custom_requests.id", ondelete="SET NULL", name="fk_orders_custom_request_id_custom_requests"),
+            sa.ForeignKey(
+                "custom_requests.id", ondelete="SET NULL", name="fk_orders_custom_request_id_custom_requests"
+            ),
             nullable=True,
         ),
         sa.Column("status", sa.String(30), nullable=False, server_default="pending_deposit"),
@@ -228,6 +233,9 @@ def upgrade() -> None:
             sa.ForeignKey("customers.id", ondelete="SET NULL", name="fk_payments_customer_id_customers"),
             nullable=True,
         ),
+        # Real payment provider binding. NULL (legacy/CCP rows) means no
+        # provider: new-commerce payment attempts are refused at creation.
+        sa.Column("provider", sa.String(50), nullable=True),
         sa.Column("method", sa.String(10), nullable=False, server_default="ccp"),
         sa.Column("status", sa.String(20), nullable=False, server_default="pending"),
         sa.Column("amount_minor", sa.BigInteger(), nullable=False),
@@ -259,7 +267,7 @@ def upgrade() -> None:
     op.create_index("ix_payments_order_id", "payments", ["order_id"])
     op.create_index("ix_payments_customer_id", "payments", ["customer_id"])
     op.create_index("ix_payments_status", "payments", ["status"])
-    # At most ONE unresolved claim per order (pending/proof_uploaded/under_review).
+    # At most ONE active (PENDING) attempt per order.
     # The sqlite_where twin keeps SQLite semantics identical to PostgreSQL
     # (without it SQLite would enforce a full unique index on order_id).
     op.create_index(
@@ -267,17 +275,17 @@ def upgrade() -> None:
         "payments",
         ["order_id"],
         unique=True,
-        postgresql_where=text("status IN ('pending','proof_uploaded','under_review')"),
-        sqlite_where=text("status IN ('pending','proof_uploaded','under_review')"),
+        postgresql_where=text("status = 'pending'"),
+        sqlite_where=text("status = 'pending'"),
     )
-    # At most ONE confirmed deposit per order.
+    # At most ONE SUCCEEDED payment per order.
     op.create_index(
         "uq_payments_order_confirmed",
         "payments",
         ["order_id"],
         unique=True,
-        postgresql_where=text("status = 'confirmed'"),
-        sqlite_where=text("status = 'confirmed'"),
+        postgresql_where=text("status = 'succeeded'"),
+        sqlite_where=text("status = 'succeeded'"),
     )
 
 

@@ -12,6 +12,7 @@ from collections.abc import AsyncIterator
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.config import Settings, get_settings
@@ -20,8 +21,10 @@ from app.core.security import create_access_token, hash_password
 from app.db.base import Base
 from app.db.session import get_db
 from app.main import create_app
+from app.models.commune import Commune
 from app.models.enums import Role
 from app.models.user import User
+from app.models.wilaya import Wilaya
 
 
 @pytest.fixture(scope="session")
@@ -52,11 +55,48 @@ def _db_setup(settings):
     yield
 
 
+# Representative reference rows shared by the integration corpus. The migration
+# data lives only in Alembic; the test DB is built with create_all, so the
+# wilaya/commune reference tables would otherwise be empty and every submission
+# that carries a ``wilaya`` would be rejected.
+_WILAYAS_SEED = [
+    ("16", "Algiers", "Alger", "الجزائر"),
+    ("19", "Oran", "Oran", "وهران"),
+    ("31", "Mostaganem", "Mostaganem", "مستغانم"),
+]
+_COMMUNES_SEED = [
+    ("1601", "16", "Alger Centre", "Alger Centre", "مركز الجزائر"),
+    ("1602", "16", "El Harrach", "El Harrach", "الحراش"),
+    ("1901", "19", "Oran Centre", "Oran Centre", "مركز وهران"),
+    ("3101", "31", "Mostaganem Centre", "Mostaganem Centre", "مركز مستغانم"),
+]
+
+
+async def _seed_reference_data(conn) -> None:
+    wilaya_ids = {}
+    for code, name_en, name_fr, name_ar in _WILAYAS_SEED:
+        w_id = uuid.uuid4()
+        wilaya_ids[code] = w_id
+        await conn.execute(insert(Wilaya).values(id=w_id, code=code, name_en=name_en, name_fr=name_fr, name_ar=name_ar))
+    for code, wilaya_code, name_en, name_fr, name_ar in _COMMUNES_SEED:
+        await conn.execute(
+            insert(Commune).values(
+                id=uuid.uuid4(),
+                wilaya_id=wilaya_ids[wilaya_code],
+                code=code,
+                name_en=name_en,
+                name_fr=name_fr,
+                name_ar=name_ar,
+            )
+        )
+
+
 @pytest.fixture(autouse=True)
 async def _setup_db(_db_setup):
     assert _engine is not None
     async with _engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await _seed_reference_data(conn)
     yield
     async with _engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)

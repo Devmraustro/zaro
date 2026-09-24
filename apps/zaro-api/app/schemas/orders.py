@@ -36,6 +36,9 @@ class OrderResponse(BaseModel):
     deposit_required_minor: int
     deposit_paid_minor: int
     balance_due_minor: int
+    delivery_wilaya: str | None
+    delivery_commune: str | None
+    delivery_address: str | None
     confirmed_at: datetime | None
     cancelled_at: datetime | None
     created_at: datetime

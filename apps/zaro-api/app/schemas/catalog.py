@@ -181,3 +181,31 @@ class ProductAdminResponse(ProductPublicResponse):
 class CategoryAdminResponse(CategoryResponse):
     created_at: datetime
     updated_at: datetime
+
+
+class ProductLocalizationUpsert(BaseModel):
+    """Strict payload for upserting a product display-strings translation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=200)
+    description: str | None = Field(default=None, max_length=20000)
+
+
+class CategoryLocalizationUpsert(BaseModel):
+    """Strict payload for upserting a category display-strings translation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=100)
+    description: str | None = Field(default=None, max_length=2000)
+
+
+class LocalizationResponse(BaseModel):
+    id: UUID
+    locale: str
+    name: str
+    description: str | None
+
+
+LOCALES = ("en", "fr", "ar")

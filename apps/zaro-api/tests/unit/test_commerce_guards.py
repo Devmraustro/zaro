@@ -7,9 +7,8 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy.exc import IntegrityError
 
-from app.core.exceptions import ConflictError, InvalidStateTransition
-from app.models.enums import PaymentStatus, QuoteStatus
-from app.services import payments_service
+from app.core.exceptions import ConflictError
+from app.models.enums import QuoteStatus
 from app.services.references import is_unique_violation, run_with_unique_retry
 
 
@@ -65,19 +64,6 @@ class TestRunWithUniqueRetry:
     def test_is_unique_violation_detection(self):
         assert is_unique_violation(_unique_error()) is True
         assert is_unique_violation(_check_error()) is False
-
-
-class TestPaymentTransitions:
-    def test_proof_can_be_replaced_before_submit(self):
-        payments_service.validate_transition(PaymentStatus.PROOF_UPLOADED, PaymentStatus.PROOF_UPLOADED)
-
-    def test_reject_after_confirm_rejected(self):
-        with pytest.raises(InvalidStateTransition):
-            payments_service.validate_transition(PaymentStatus.CONFIRMED, PaymentStatus.CANCELLED)
-
-    def test_submit_after_confirm_rejected(self):
-        with pytest.raises(InvalidStateTransition):
-            payments_service.validate_transition(PaymentStatus.CONFIRMED, PaymentStatus.UNDER_REVIEW)
 
 
 class TestDepositDoubleApply:

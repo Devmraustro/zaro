@@ -1,4 +1,4 @@
-"""Migration tests: 0004 must apply cleanly and roll back on SQLite.
+"""Migration tests: the full chain (0001 -> 0015) must apply cleanly and roll back on SQLite.
 
 These run alembic against a throwaway file database, proving the migration
 chain is executable end-to-end (not just metadata-identical to the models).
@@ -77,8 +77,6 @@ def test_upgrade_head_creates_commerce_tables(alembic_env, sqlite_url):
             "quote_lines",
             "orders",
             "order_lines",
-            "payments",
-            "payment_configuration",
             # Phase 4 inventory + production
             "stock_levels",
             "stock_movements",
@@ -99,8 +97,6 @@ def test_upgrade_head_creates_commerce_tables(alembic_env, sqlite_url):
         assert {"quote_number", "total_minor", "deposit_amount_minor", "status"} <= quote_cols
         order_cols = {c["name"] for c in inspector.get_columns("orders")}
         assert {"order_number", "total_minor", "deposit_required_minor", "status"} <= order_cols
-        payment_cols = {c["name"] for c in inspector.get_columns("payments")}
-        assert {"payment_reference", "amount_minor", "status"} <= payment_cols
         stock_cols = {c["name"] for c in inspector.get_columns("stock_levels")}
         assert {"material_id", "on_hand", "reserved"} <= stock_cols
         prod_cols = {c["name"] for c in inspector.get_columns("production_orders")}
@@ -127,8 +123,6 @@ def test_downgrade_removes_phase2_tables(alembic_env, sqlite_url):
             "quote_lines",
             "orders",
             "order_lines",
-            "payments",
-            "payment_configuration",
             "stock_levels",
             "stock_movements",
             "production_orders",
@@ -142,7 +136,10 @@ def test_downgrade_removes_phase2_tables(alembic_env, sqlite_url):
 
 
 def test_migration_chain_is_reversible(alembic_env, sqlite_url):
-    """Full up-down-up cycle proves idempotent chain integrity."""
+    """Full up-down-up cycle proves idempotent chain integrity.
+
+    Head is 0015 (the chain 0001..0010 was later extended by the 0015 delivery
+    snapshot; 0011-0014 do not exist)."""
     _upgrade("head")
     _downgrade("base")
     _upgrade("head")
@@ -151,6 +148,6 @@ def test_migration_chain_is_reversible(alembic_env, sqlite_url):
     try:
         with engine.connect() as conn:
             version = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
-        assert version == "0007"
+        assert version == "0015"
     finally:
         engine.dispose()

@@ -83,12 +83,30 @@ async def pg_session_factory():
     try:
         yield async_sessionmaker(engine, expire_on_commit=False)
     finally:
+        # Use TRUNCATE CASCADE for proper cleanup with FK constraints
         async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.drop_all)
+            # Get all table names in dependency order (children first)
+            tables_result = await conn.execute(
+                text("""
+                SELECT tablename FROM pg_tables
+                WHERE schemaname = 'public'
+                ORDER BY tablename
+            """)
+            )
+            tables = [row[0] for row in tables_result]
+            if tables:
+                # Disable FK checks temporarily and truncate
+                await conn.execute(text("SET session_replication_role = 'replica'"))
+                for table in tables:
+                    await conn.execute(text(f'TRUNCATE TABLE "{table}" CASCADE'))
+                await conn.execute(text("SET session_replication_role = 'origin'"))
         await engine.dispose()
 
 
-async def _create_material_and_stock(maker, *, code="STEEL-BEAM", qty="100"):
+async def _create_material_and_stock(maker, *, code=None, qty="100"):
+    """Create a material with unique code to avoid collisions."""
+    if code is None:
+        code = f"STEEL-BEAM-{uuid4().hex[:8]}"
     async with maker() as s:
         mat = Material(id=uuid4(), code=code, name="Steel Beam", category="steel", unit="kg", is_active=True)
         s.add(mat)
@@ -126,11 +144,15 @@ async def _create_planned_po(maker, material_id, qty="60"):
         s.add(order)
         await s.flush()
         po = await production_service.create_production_order(s, order=order)
+        # Get the material to use its actual code
+        from app.models.material import Material
+
+        mat = await s.get(Material, material_id)
         req = MaterialRequirement(
             material_id=material_id,
-            material_name="Steel Beam",
-            material_code="STEEL-BEAM",
-            material_unit="kg",
+            material_name=mat.name,
+            material_code=mat.code,
+            material_unit=mat.unit,
             quantity_required=Decimal(qty),
             unit_price_minor=100,
         )
@@ -205,14 +227,14 @@ async def test_concurrent_idempotent_purchase_single_application(pg_session_fact
     async with maker() as s:
         level = (await s.execute(select(StockLevel).where(StockLevel.material_id == material_id))).scalar_one()
         assert level.on_hand == Decimal("10"), f"stock applied more than once: {level.on_hand}"
-        moves = (
-            (await s.execute(select(StockMovement).where(StockMovement.material_id == material_id))).scalars().all()
-        )
+        moves = (await s.execute(select(StockMovement).where(StockMovement.material_id == material_id))).scalars().all()
         assert len(moves) == 1, f"more than one movement recorded for a single idempotent purchase: {len(moves)}"
         assert moves[0].idempotency_key == key
         audit = (
             await s.execute(
-                select(func.count()).select_from(AuditLog).where(AuditLog.action == AuditAction.MATERIAL_PURCHASED.value)
+                select(func.count())
+                .select_from(AuditLog)
+                .where(AuditLog.action == AuditAction.MATERIAL_PURCHASED.value)
             )
         ).scalar_one()
         assert audit == 1, f"expected exactly one MATERIAL_PURCHASED audit event, got {audit}"

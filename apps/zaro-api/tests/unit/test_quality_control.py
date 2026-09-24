@@ -510,9 +510,7 @@ class TestHttpSecurity:
         start = await client.post(f"/api/v1/admin/production/{po_id}/start", headers=worker_headers, json={})
         assert start.status_code == 200, start.text
 
-        po = (
-            await db_session.execute(select(ProductionOrder).where(ProductionOrder.id == UUID(po_id)))
-        ).scalar_one()
+        po = (await db_session.execute(select(ProductionOrder).where(ProductionOrder.id == UUID(po_id)))).scalar_one()
         assert str(po.assigned_worker_id) == str(worker_user.id)
 
         resp = await client.post(self.QC_START.format(id=po_id), headers=worker_headers, json={})

@@ -48,7 +48,7 @@ class QuoteCreate(BaseModel):
     lines: list[QuoteLineIn] = Field(min_length=1, max_length=50)
     discount_minor: int = Field(default=0, ge=0, le=MAX_AMOUNT_MINOR)
     delivery_fee_minor: int = Field(default=0, ge=0, le=MAX_AMOUNT_MINOR)
-    deposit_percentage: int | None = Field(default=None, ge=1, le=100)
+    deposit_percentage: int | None = Field(default=None, ge=0, le=100)
     valid_until: datetime
     notes: str | None = Field(default=None, max_length=2000)
 

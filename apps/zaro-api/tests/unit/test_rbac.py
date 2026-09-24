@@ -34,7 +34,6 @@ class TestPermissions:
             "leads",
             "quotes",
             "orders",
-            "payments",
             "production",
             "quality",
             "delivery",
@@ -45,7 +44,7 @@ class TestPermissions:
         assert groups == expected_groups
 
     def test_permission_count(self):
-        assert len(Permission) >= 45
+        assert len(Permission) >= 40
 
     def test_permissions_are_dotted_strings(self):
         for perm in Permission:
@@ -74,19 +73,15 @@ class TestRolePermissionMatrix:
         assert Permission.PRODUCTION_READ in worker_perms
         assert Permission.PRODUCTS_READ in worker_perms
         assert Permission.FINANCE_READ not in worker_perms
-        assert Permission.PAYMENTS_CONFIRM not in worker_perms
 
     def test_customer_has_minimal_permissions(self):
         customer_perms = ROLE_PERMISSIONS[Role.CUSTOMER]
         assert len(customer_perms) <= 3
         assert Permission.PRODUCTS_READ in customer_perms
-        assert Permission.PAYMENTS_CONFIRM not in customer_perms
         assert Permission.USERS_READ not in customer_perms
 
-    def test_sales_cannot_confirm_payments(self):
+    def test_sales_cannot_access_finance(self):
         sales_perms = ROLE_PERMISSIONS[Role.SALES]
-        assert Permission.PAYMENTS_CONFIRM not in sales_perms
-        assert Permission.PAYMENTS_REJECT not in sales_perms
         assert Permission.FINANCE_READ not in sales_perms
 
     def test_production_cannot_manage_users(self):
@@ -99,18 +94,15 @@ class TestRolePermissionMatrix:
         content_perms = ROLE_PERMISSIONS[Role.CONTENT]
         assert Permission.FINANCE_READ not in content_perms
         assert Permission.FINANCE_MANAGE not in content_perms
-        assert Permission.PAYMENTS_CONFIRM not in content_perms
 
     def test_accounting_cannot_manage_roles(self):
         acct_perms = ROLE_PERMISSIONS[Role.ACCOUNTING]
         assert Permission.USERS_ASSIGN_ROLE not in acct_perms
         assert Permission.USERS_DISABLE not in acct_perms
-        assert Permission.PAYMENTS_CONFIRM not in acct_perms
 
-    def test_admin_cannot_confirm_payments(self):
+    def test_admin_cannot_access_finance(self):
         admin_perms = ROLE_PERMISSIONS[Role.ADMIN]
-        assert Permission.PAYMENTS_CONFIRM not in admin_perms
-        assert Permission.PAYMENTS_REJECT not in admin_perms
+        assert Permission.FINANCE_READ not in admin_perms
 
     def test_only_owner_can_assign_roles(self):
         for role in Role:
@@ -135,10 +127,10 @@ class TestPermissionLookup:
         assert perms == frozenset()
 
     def test_has_permission_owner(self):
-        assert has_permission(Role.OWNER, Permission.PAYMENTS_CONFIRM) is True
+        assert has_permission(Role.OWNER, Permission.AUDIT_READ) is True
 
     def test_has_permission_worker_deny(self):
-        assert has_permission(Role.WORKER, Permission.PAYMENTS_CONFIRM) is False
+        assert has_permission(Role.WORKER, Permission.AUDIT_READ) is False
 
     def test_has_permission_customer_deny(self):
         assert has_permission(Role.CUSTOMER, Permission.USERS_READ) is False

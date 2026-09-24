@@ -282,7 +282,7 @@ export async function logout(): Promise<void> {
     const headers: Record<string, string> = {
       Accept: "application/json",
       Authorization: `Bearer ${token}`,
-    };
+    }
     if (csrfToken !== null) {
       headers["X-CSRF-Token"] = csrfToken;
     }
@@ -297,4 +297,72 @@ export async function logout(): Promise<void> {
     }
   }
   clearAuthState();
+}
+
+/**
+ * Authenticated admin file upload (multipart/form-data).
+ */
+export async function adminUpload<T>(path: string, formData: FormData, options?: RequestInit): Promise<T> {
+  let token = accessToken;
+  if (token === null) {
+    if (csrfToken === null && !(await bootstrapSession())) {
+      throw new AuthError("Not signed in — sign in again", "not_signed_in");
+    }
+    token = await refreshAccessToken();
+    if (token === null) {
+      throw new AuthError("Not signed in — sign in again", "not_signed_in");
+    }
+  }
+  try {
+    const response = await fetch(`${API_BASE}${path}`, {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        ...(csrfToken !== null ? { "X-CSRF-Token": csrfToken } : {}),
+        ...(options?.headers as Record<string, string>),
+      },
+      body: formData,
+    });
+    if (response.status === 401) {
+      throw new Unauthorized(response);
+    }
+    if (!response.ok) {
+      const body = (await response.json().catch(() => null)) as { error?: { message?: string } } | null;
+      throw new Error(body?.error?.message ?? `HTTP ${response.status}`);
+    }
+    if (response.status === 204) return undefined as T;
+    return (await response.json()) as T;
+  } catch (err) {
+    if (err instanceof Unauthorized) {
+      const fresh = await refreshAccessToken();
+      if (fresh === null) {
+        throw new AuthError("Session expired — sign in again", "session_expired");
+      }
+      try {
+        const response = await fetch(`${API_BASE}${path}`, {
+          method: "POST",
+          credentials: "include",
+          headers: {
+            Authorization: `Bearer ${fresh}`,
+            ...(csrfToken !== null ? { "X-CSRF-Token": csrfToken } : {}),
+          },
+          body: formData,
+        });
+        if (!response.ok) {
+          const body = (await response.json().catch(() => null)) as { error?: { message?: string } } | null;
+          throw new Error(body?.error?.message ?? `HTTP ${response.status}`);
+        }
+        if (response.status === 204) return undefined as T;
+        return (await response.json()) as T;
+      } catch (retryErr) {
+        if (retryErr instanceof Unauthorized) {
+          clearAuthState();
+          throw new AuthError("Session expired — sign in again", "session_expired");
+        }
+        throw retryErr;
+      }
+    }
+    throw err;
+  }
 }

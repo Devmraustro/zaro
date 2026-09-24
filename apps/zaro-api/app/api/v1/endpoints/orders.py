@@ -2,7 +2,7 @@
 
 Orders are born server-side from accepted quotes; there is deliberately no
 client-facing "create order" endpoint. Customers may view ONLY their own
-orders/payments; staff access is permission-gated.
+orders; staff access is permission-gated.
 """
 
 from typing import Annotated, Any
@@ -20,8 +20,7 @@ from app.models.enums import Permission
 from app.models.order import Order
 from app.models.user import User
 from app.schemas.orders import OrderCancel
-from app.schemas.payments import DepositClaimRequest
-from app.services import orders_service, payments_service
+from app.services import orders_service
 from app.services.audit import record_event
 
 router = APIRouter(tags=["orders"])
@@ -119,61 +118,6 @@ async def get_my_order(
     return serialize_public(order, await orders_service.get_lines(db, order.id))
 
 
-@router.get("/orders/{order_id}/payments")
-async def list_order_payments(
-    order_id: UUID,
-    user: Annotated[User, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(get_db)],
-) -> list[dict[str, Any]]:
-    order = await _staff_or_owner_order(db, order_id, user, Permission.PAYMENTS_READ)
-    payments_list = await payments_service.list_for_orders(db, [order.id])
-    from app.api.v1.endpoints.payments import serialize_public as serialize_payment
-
-    return [serialize_payment(p) for p in payments_list]
-
-
-@router.post("/orders/{order_id}/payments", status_code=201)
-async def open_deposit_claim(
-    request: Request,
-    order_id: UUID,
-    user: Annotated[User, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(get_db)],
-    _payload: DepositClaimRequest | None = None,
-) -> dict[str, Any]:
-    """Open the CCP deposit claim. Amount/reference/status are server-derived.
-
-    `extra="forbid"` on DepositClaimRequest ensures any client-submitted
-    fields (amount, status, etc.) are rejected with 422 instead of
-    silently ignored.
-    """
-    order = await _staff_or_owner_order(db, order_id, user, Permission.PAYMENTS_REVIEW)
-    customer_uuid = UUID(str(order.customer_id)) if order.customer_id is not None else None
-    payment = await payments_service.create_deposit_claim(db, order, customer_id=customer_uuid)
-    request_id_ctx, ip_address, user_agent = _get_request_context(request)
-    await record_event(
-        db,
-        action=AuditAction.PAYMENT_CREATED,
-        result=AuditResult.SUCCESS,
-        actor_user_id=user.id,
-        resource_type="payment",
-        resource_id=str(payment.id),
-        request_id=request_id_ctx,
-        ip_address=ip_address,
-        user_agent=user_agent,
-        metadata={
-            "payment_reference": payment.payment_reference,
-            "order_number": order.order_number,
-            "amount_minor": payment.amount_minor,
-            "currency": payment.currency,
-            "status": str(payment.status),
-        },
-    )
-    await db.commit()
-    from app.api.v1.endpoints.payments import serialize_public as serialize_payment
-
-    return serialize_payment(payment)
-
-
 # --- Admin surface --------------------------------------------------------------
 
 
@@ -217,9 +161,6 @@ async def cancel_order(
     user: Annotated[User, Depends(require_permission(Permission.ORDERS_CANCEL))],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict[str, Any]:
-    # Locking + claim linkage happen inside orders_service.cancel_order_with_claim in
-    # the global Payment -> Order -> Quote order (same as confirm_payment), so a
-    # concurrent confirmation serializes cleanly instead of deadlocking.
     order, cancelled_claim_id, old_status = await orders_service.cancel_order_with_claim(
         db, order_id, reason=payload.reason
     )
@@ -242,18 +183,5 @@ async def cancel_order(
             "cancelled_claim_id": str(cancelled_claim_id) if cancelled_claim_id is not None else None,
         },
     )
-    if cancelled_claim_id is not None:
-        await record_event(
-            db,
-            action=AuditAction.PAYMENT_CANCELLED,
-            result=AuditResult.SUCCESS,
-            actor_user_id=user.id,
-            resource_type="payment",
-            resource_id=str(cancelled_claim_id),
-            request_id=request_id_ctx,
-            ip_address=ip_address,
-            user_agent=user_agent,
-            metadata={"order_number": order.order_number, "reason": "order_cancelled"},
-        )
     await db.commit()
     return serialize_admin(order, await orders_service.get_lines(db, order.id))
