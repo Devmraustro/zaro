@@ -58,6 +58,12 @@ class OrderCancel(BaseModel):
     reason: str | None = Field(default=None, max_length=500)
 
 
+class OrderDeposit(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    amount_minor: int = Field(gt=0)
+
+
 class PaginatedOrders(BaseModel):
     items: list[OrderAdminResponse]
     total: int

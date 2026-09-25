@@ -259,11 +259,15 @@ async def assign_request(
     staff_user = await db.get(UserModel, UUID(staff_user_id))
     if staff_user is None:
         raise ForbiddenError("Staff member not found")
-    if staff_user.role != "staff":
+    # The RBAC model has no "staff" role. Assignment targets users whose role
+    # grants the permission to work custom requests (owner/admin/sales).
+    from app.core.rbac import has_permission
+
+    if not has_permission(staff_user.role, Permission.CUSTOM_REQUESTS_UPDATE):
         raise ForbiddenError("User is not a staff member")
 
     custom_request = await custom_requests_service.get_request(db, request_id)
-    custom_request.assigned_to = staff_user_id
+    custom_request.assigned_to = staff_user.id
     await db.flush()
 
     request_id_ctx, ip_address, user_agent = _get_request_context(request)

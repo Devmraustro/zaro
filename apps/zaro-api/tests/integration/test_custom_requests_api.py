@@ -209,6 +209,85 @@ async def test_status_change_requires_update_permission(client, auth_header_fact
     assert resp.status_code == 403
 
 
+# --- Assignment (RBAC via custom_requests.update, not a "staff" role) ---------
+
+
+async def _assign(client, request_id: str, staff_user_id: str, headers) -> object:
+    return await client.post(
+        f"/api/v1/admin/custom-requests/{request_id}/assign",
+        params={"staff_user_id": staff_user_id},
+        headers=headers,
+    )
+
+
+@pytest.mark.parametrize(
+    "assigner_role,assignee_role",
+    [("owner", "admin"), ("admin", "sales"), ("sales", "owner"), ("owner", "owner")],
+)
+@pytest.mark.anyio
+async def test_assign_to_staff_role_succeeds(client, auth_header_factory, assigner_role, assignee_role):
+    request_obj = await _submit(client)
+    assigner_headers, _assigner = await auth_header_factory(role=assigner_role)
+    _assignee_headers, assignee = await auth_header_factory(role=assignee_role)
+
+    resp = await _assign(client, request_obj["id"], str(assignee.id), assigner_headers)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["assigned_to"] == str(assignee.id)
+
+
+@pytest.mark.parametrize("role", ["worker", "production", "content", "accounting", "customer"])
+@pytest.mark.anyio
+async def test_assign_to_non_staff_role_rejected(client, auth_header_factory, role):
+    request_obj = await _submit(client)
+    owner_headers, _owner = await auth_header_factory(role="owner")
+    _headers, assignee = await auth_header_factory(role=role)
+
+    resp = await _assign(client, request_obj["id"], str(assignee.id), owner_headers)
+    assert resp.status_code == 403
+    assert resp.json()["error"]["code"] == "forbidden"
+
+
+@pytest.mark.anyio
+async def test_assign_requires_update_permission(client, auth_header_factory):
+    request_obj = await _submit(client)
+    worker_headers, _worker = await auth_header_factory(role="worker")
+    _admin_headers, assignee = await auth_header_factory(role="admin")
+
+    resp = await _assign(client, request_obj["id"], str(assignee.id), worker_headers)
+    assert resp.status_code == 403
+
+
+@pytest.mark.anyio
+async def test_assign_to_unknown_user_rejected(client, owner_headers):
+    from uuid import uuid4
+
+    request_obj = await _submit(client)
+    resp = await _assign(client, request_obj["id"], str(uuid4()), owner_headers)
+    assert resp.status_code == 403
+    assert resp.json()["error"]["code"] == "forbidden"
+
+
+@pytest.mark.anyio
+async def test_assign_audit_actor_is_server_derived(client, auth_header_factory):
+    request_obj = await _submit(client)
+    owner_headers, owner = await auth_header_factory(role="owner")
+    _sales_headers, assignee = await auth_header_factory(role="sales")
+
+    resp = await _assign(client, request_obj["id"], str(assignee.id), owner_headers)
+    assert resp.status_code == 200, resp.text
+
+    logs = (await client.get("/api/v1/audit/logs", headers=owner_headers, params={"page_size": 50})).json()["items"]
+    entry = next(
+        e
+        for e in logs
+        if e["action"] == "CUSTOM_REQUEST_ASSIGNED" and (e["metadata"] or {}).get("assigned_to") == str(assignee.id)
+    )
+    assert entry["actor_user_id"] == str(owner.id)
+    assert entry["metadata"]["assigned_by"] == str(owner.id)
+    assert entry["resource_id"] == request_obj["id"]
+
+
 # --- Customer self-service ownership -------------------------------------------
 
 

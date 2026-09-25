@@ -19,7 +19,7 @@ from app.models.audit_enums import AuditAction, AuditResult
 from app.models.enums import Permission
 from app.models.order import Order
 from app.models.user import User
-from app.schemas.orders import OrderCancel
+from app.schemas.orders import OrderCancel, OrderDeposit
 from app.services import orders_service
 from app.services.audit import record_event
 
@@ -181,6 +181,77 @@ async def cancel_order(
             "old_status": old_status,
             "new_status": "cancelled",
             "cancelled_claim_id": str(cancelled_claim_id) if cancelled_claim_id is not None else None,
+        },
+    )
+    await db.commit()
+    return serialize_admin(order, await orders_service.get_lines(db, order.id))
+
+
+@admin_router.post("/{order_id}/confirm")
+async def confirm_order(
+    request: Request,
+    order_id: UUID,
+    user: Annotated[User, Depends(require_permission(Permission.ORDERS_UPDATE))],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict[str, Any]:
+    """Confirm an order without a deposit (net terms). Owner/admin only."""
+    order = await orders_service.get_order_for_update(db, order_id)
+    old_status = str(order.status)
+    order = await orders_service.confirm_order_without_deposit(db, order)
+
+    request_id_ctx, ip_address, user_agent = _get_request_context(request)
+    await record_event(
+        db,
+        action=AuditAction.ORDER_STATUS_CHANGED,
+        result=AuditResult.SUCCESS,
+        actor_user_id=user.id,
+        resource_type="order",
+        resource_id=str(order.id),
+        request_id=request_id_ctx,
+        ip_address=ip_address,
+        user_agent=user_agent,
+        metadata={
+            "order_number": order.order_number,
+            "old_status": old_status,
+            "new_status": str(order.status),
+            "method": "confirm_without_deposit",
+        },
+    )
+    await db.commit()
+    return serialize_admin(order, await orders_service.get_lines(db, order.id))
+
+
+@admin_router.post("/{order_id}/deposit")
+async def record_order_deposit(
+    request: Request,
+    order_id: UUID,
+    payload: OrderDeposit,
+    user: Annotated[User, Depends(require_permission(Permission.ORDERS_UPDATE))],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict[str, Any]:
+    """Account a confirmed deposit against the order (no payment provider)."""
+    order = await orders_service.get_order_for_update(db, order_id)
+    old_status = str(order.status)
+    order = await orders_service.apply_confirmed_deposit(db, order, amount_minor=payload.amount_minor)
+
+    request_id_ctx, ip_address, user_agent = _get_request_context(request)
+    await record_event(
+        db,
+        action=AuditAction.ORDER_DEPOSIT_RECORDED,
+        result=AuditResult.SUCCESS,
+        actor_user_id=user.id,
+        resource_type="order",
+        resource_id=str(order.id),
+        request_id=request_id_ctx,
+        ip_address=ip_address,
+        user_agent=user_agent,
+        metadata={
+            "order_number": order.order_number,
+            "amount_minor": payload.amount_minor,
+            "old_status": old_status,
+            "new_status": str(order.status),
+            "deposit_paid_minor": order.deposit_paid_minor,
+            "balance_due_minor": order.balance_due_minor,
         },
     )
     await db.commit()
