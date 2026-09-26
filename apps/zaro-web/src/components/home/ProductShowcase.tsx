@@ -9,14 +9,6 @@ import { buttonClass } from "@/components/ui/Button";
 import { apiFetch } from "@/lib/api";
 import type { Category, PaginatedProducts } from "@/types/api";
 
-const CONCEPT_CATEGORIES = [
-  { label: "Tables", href: "/shop" },
-  { label: "Shelves", href: "/shop" },
-  { label: "Consoles", href: "/shop" },
-  { label: "Decor", href: "/shop" },
-  { label: "Custom pieces", href: "/custom" },
-];
-
 export default function ProductShowcase() {
   const [products, setProducts] = useState<PaginatedProducts | null>(null);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -49,7 +41,7 @@ export default function ProductShowcase() {
   const categoryChips =
     categories.length > 0
       ? categories.map((c) => ({ label: c.name, href: `/shop?category=${encodeURIComponent(c.slug)}` }))
-      : CONCEPT_CATEGORIES;
+      : [];
 
   return (
     <section id="products" className="grain bg-zaro-ivory py-24 sm:py-32">
@@ -69,20 +61,22 @@ export default function ProductShowcase() {
           </Reveal>
         </div>
 
-        <Reveal delay={2}>
-          <ul className="mt-12 flex flex-wrap gap-x-8 gap-y-3 border-y border-zaro-graphite/10 py-5">
-            {categoryChips.map((chip) => (
-              <li key={chip.label}>
-                <Link
-                  href={chip.href}
-                  className="text-[0.72rem] font-medium uppercase tracking-[0.2em] text-zaro-graphite/70 transition-colors hover:text-zaro-bronze-dark"
-                >
-                  {chip.label}
-                </Link>
-              </li>
-            ))}
-          </ul>
-        </Reveal>
+        {categoryChips.length > 0 && (
+          <Reveal delay={2}>
+            <ul className="mt-12 flex flex-wrap gap-x-8 gap-y-3 border-y border-zaro-graphite/10 py-5">
+              {categoryChips.map((chip) => (
+                <li key={chip.label}>
+                  <Link
+                    href={chip.href}
+                    className="text-[0.72rem] font-medium uppercase tracking-[0.2em] text-zaro-graphite/70 transition-colors hover:text-zaro-bronze-dark"
+                  >
+                    {chip.label}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </Reveal>
+        )}
 
         {ready && products && products.items.length > 0 ? (
           <div className="mt-14 grid grid-cols-1 gap-x-6 gap-y-12 sm:grid-cols-2 lg:grid-cols-4">

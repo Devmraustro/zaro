@@ -77,7 +77,7 @@ describe("ProductCard", () => {
         {
           id: "m1",
           url_path: "/api/v1/files/m1/public-content",
-          media_kind: "image",
+          media_kind: "hero",
           alt_text: "Oak table in a dining room",
           sort_order: 0,
         },
@@ -89,6 +89,69 @@ describe("ProductCard", () => {
     expect(img.getAttribute("src")).toContain("/api/v1/files/m1/public-content");
   });
 
+  it("prefers the hero image over a lower sort_order gallery image", () => {
+    const product = makeProduct({
+      media: [
+        {
+          id: "m-gallery",
+          url_path: "/api/v1/files/m-gallery/public-content",
+          media_kind: "gallery",
+          alt_text: null,
+          sort_order: 0,
+        },
+        {
+          id: "m-hero",
+          url_path: "/api/v1/files/m-hero/public-content",
+          media_kind: "hero",
+          alt_text: "Hero shot",
+          sort_order: 5,
+        },
+      ],
+    });
+    render(<ProductCard product={product} />);
+    expect(screen.getByRole("img").getAttribute("src")).toContain("/files/m-hero/");
+  });
+
+  it("never renders a video media item as an image", () => {
+    const product = makeProduct({
+      media: [
+        {
+          id: "m-video",
+          url_path: "/api/v1/files/m-video/public-content",
+          media_kind: "video",
+          alt_text: "Product film",
+          sort_order: 0,
+        },
+      ],
+    });
+    render(<ProductCard product={product} />);
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+    expect(screen.getByText("ZARO")).toBeInTheDocument();
+  });
+
+  it("renders a gallery image when no hero is set", () => {
+    const product = makeProduct({
+      media: [
+        {
+          id: "m2",
+          url_path: "/api/v1/files/m2/public-content",
+          media_kind: "gallery",
+          alt_text: "Detail",
+          sort_order: 1,
+        },
+        {
+          id: "m1",
+          url_path: "/api/v1/files/m1/public-content",
+          media_kind: "gallery",
+          alt_text: null,
+          sort_order: 0,
+        },
+      ],
+    });
+    render(<ProductCard product={product} />);
+    expect(screen.getByRole("img").getAttribute("src")).toContain("/files/m1/");
+  });
+
   it("does not duplicate /api/v1 when the API base URL already contains it", () => {
     vi.stubEnv("NEXT_PUBLIC_API_BASE_URL", "https://api.example.com/api/v1");
     const product = makeProduct({
@@ -96,7 +159,7 @@ describe("ProductCard", () => {
         {
           id: "m1",
           url_path: "/api/v1/files/m1/public-content",
-          media_kind: "image",
+          media_kind: "hero",
           alt_text: "Oak table in a dining room",
           sort_order: 0,
         },

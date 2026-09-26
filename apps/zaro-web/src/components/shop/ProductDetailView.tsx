@@ -8,7 +8,7 @@ import { ErrorState } from "@/components/ui/StateViews";
 import { ArrowLeft, ArrowRight } from "@/components/ui/icons";
 import { apiFetch } from "@/lib/api";
 import { formatPrice } from "@/lib/format";
-import { mediaUrl } from "@/lib/media";
+import { mediaUrl, renderableImages } from "@/lib/media";
 import type { Product } from "@/types/api";
 
 interface DimensionView {
@@ -74,7 +74,7 @@ export default function ProductDetailView({
     );
   }
 
-  const images = product.media.filter((m) => m.media_kind === "image");
+  const images = renderableImages(product.media);
   const current = images[activeImage] ?? null;
   const dimensions = product.dimensions as DimensionView | null;
   const dimText =
