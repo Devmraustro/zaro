@@ -1,10 +1,12 @@
 export function EmptyState({
   title,
   description,
+  action,
   className = "",
 }: {
   title: string;
   description?: string;
+  action?: React.ReactNode;
   className?: string;
 }) {
   return (
@@ -15,6 +17,7 @@ export function EmptyState({
       <span className="h-px w-12 bg-zaro-bronze" aria-hidden="true" />
       <h2 className="mt-6 font-serif text-2xl font-medium text-zaro-black">{title}</h2>
       {description ? <p className="mt-3 max-w-md text-sm leading-relaxed text-zaro-steel">{description}</p> : null}
+      {action}
     </div>
   );
 }

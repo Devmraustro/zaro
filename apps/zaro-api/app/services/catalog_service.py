@@ -114,6 +114,7 @@ async def create_product(db: AsyncSession, payload, *, actor_user_id: UUID) -> P
             stock_status=payload.stock_status,
             delivery_available=payload.delivery_available,
             delivery_info=payload.delivery_info,
+            is_featured=payload.is_featured,
             meta_title=payload.meta_title,
             meta_description=payload.meta_description,
             status=ProductStatus.DRAFT,
@@ -184,13 +185,19 @@ async def update_product(db: AsyncSession, product: Product, changes: dict) -> P
         product.dimensions = _dimensions_dict(changes["dimensions"])
     if "materials_spec" in changes:
         product.materials_spec = _materials_spec_list(changes["materials_spec"])
+    if "production_time_days" in changes:
+        # Nullable with real clear semantics: an absent key preserves the stored
+        # value, an explicit null clears it, and an integer updates it. The loop
+        # below treats null as "leave unchanged", which would make this field
+        # impossible to clear once set.
+        product.production_time_days = changes["production_time_days"]
     for field_name in (
         "description",
         "weight_kg",
-        "production_time_days",
         "stock_status",
         "delivery_available",
         "delivery_info",
+        "is_featured",
         "meta_title",
         "meta_description",
     ):

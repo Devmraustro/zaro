@@ -82,6 +82,7 @@ class ProductCreate(BaseModel):
     stock_status: str = Field(default="made_to_order", pattern=r"^(in_stock|made_to_order|out_of_stock)$")
     delivery_available: bool = True
     delivery_info: str | None = Field(default=None, max_length=2000)
+    is_featured: bool = False
     meta_title: str | None = Field(default=None, max_length=200)
     meta_description: str | None = Field(default=None, max_length=500)
 
@@ -101,6 +102,7 @@ class ProductUpdate(BaseModel):
     stock_status: str | None = Field(default=None, pattern=r"^(in_stock|made_to_order|out_of_stock)$")
     delivery_available: bool | None = None
     delivery_info: str | None = Field(default=None, max_length=2000)
+    is_featured: bool | None = None
     meta_title: str | None = Field(default=None, max_length=200)
     meta_description: str | None = Field(default=None, max_length=500)
 

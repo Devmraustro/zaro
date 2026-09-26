@@ -140,6 +140,10 @@ export interface TokenResponse {
 
 export type ProductStatus = "draft" | "active" | "archived";
 
+export type StockStatus = "in_stock" | "made_to_order" | "out_of_stock";
+
+export type ProductMediaKind = "hero" | "gallery" | "detail" | "lifestyle" | "video";
+
 export interface ProductVariantAdmin {
   id: string;
   sku: string;
@@ -150,10 +154,26 @@ export interface ProductVariantAdmin {
   sort_order: number;
 }
 
+export type AdminProductVariant = ProductVariantAdmin;
+
 export interface AdminProduct extends Product<ProductVariantAdmin> {
   status: ProductStatus;
   created_at: string;
   updated_at: string;
+}
+
+export interface AdminCategory extends Category {
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AdminProductList {
+  items: AdminProduct[];
+  total: number;
+  page: number;
+  page_size: number;
+  has_next: boolean;
+  has_previous: boolean;
 }
 
 export interface AdminCustomRequest extends CustomRequestPublic {
@@ -168,38 +188,12 @@ export interface AdminCustomRequest extends CustomRequestPublic {
 
 export interface AdminMedia {
   id: string;
-  url_path: string;
-  media_kind: string;
+  media_kind: string | null;
   alt_text: string | null;
   sort_order: number;
   original_filename: string | null;
   content_type: string;
   size_bytes: number;
-  created_at: string;
-}
-
-export interface AdminProductVariant {
-  id: string;
-  sku: string;
-  label: string;
-  attributes: Record<string, string> | null;
-  price_override_minor: number | null;
-  is_active: boolean;
-  sort_order: number;
-}
-
-export interface AdminProduct extends Product<AdminProductVariant> {
-  status: ProductStatus;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface AdminMedia {
-  id: string;
-  url_path: string;
-  media_kind: string;
-  alt_text: string | null;
-  sort_order: number;
   created_at: string;
 }
 
@@ -240,4 +234,66 @@ export interface TrackResult {
   commune: string | null;
   created_at: string;
   updated_at: string;
+}
+
+// --- Catalog admin request payloads ---------------------------------------
+// Mirrors the extra=forbid backend schemas. `is_featured` is intentionally
+// absent from the protected set: it is merchandising data, editable by any
+// role holding products.create / products.update.
+
+export interface DimensionsInput {
+  width: number;
+  height?: number | null;
+  depth?: number | null;
+  unit: "cm" | "mm" | "m" | "in";
+}
+
+export interface MaterialSpecInput {
+  name: string;
+  grade?: string | null;
+  finish?: string | null;
+}
+
+export interface ProductCreateInput {
+  name: string;
+  description?: string | null;
+  category_id?: string | null;
+  dimensions?: DimensionsInput | null;
+  materials_spec?: MaterialSpecInput[] | null;
+  weight_kg?: number | null;
+  production_time_days?: number | null;
+  stock_status?: StockStatus;
+  delivery_available?: boolean;
+  delivery_info?: string | null;
+  is_featured?: boolean;
+  meta_title?: string | null;
+  meta_description?: string | null;
+}
+
+export type ProductUpdateInput = Partial<ProductCreateInput>;
+
+export interface ProductPriceInput {
+  selling_price_minor: number;
+  currency?: string;
+  reason?: string | null;
+}
+
+export interface CategoryCreateInput {
+  name: string;
+  description?: string | null;
+  sort_order?: number;
+}
+
+export interface CategoryUpdateInput {
+  name?: string;
+  description?: string | null;
+  sort_order?: number;
+  is_active?: boolean;
+}
+
+export interface VariantCreateInput {
+  label: string;
+  attributes?: Record<string, string> | null;
+  price_override_minor?: number | null;
+  sort_order?: number;
 }
